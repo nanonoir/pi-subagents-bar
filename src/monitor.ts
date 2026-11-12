@@ -9,7 +9,7 @@
  * aggregate counts are kept separate and non-additive.
  *
  * Foreground tool results and current-branch history use indexed identities.
- * Structured notices, cost enrichment and elapsed refresh remain pending.
+ * Structured notices and elapsed display updates are session-scoped; cost enrichment is deferred.
  */
 import type { EventTransport, MonitorSnapshot, RecordCategory, SnapshotRecord } from "./types.ts";
 
@@ -42,6 +42,7 @@ export interface MonitorOptions {
   /** Called after any snapshot-relevant change (never after dispose). */
   onChange?: () => void;
   uuid?: () => string;
+  now?: () => number;
 }
 
 export interface Monitor {
@@ -150,7 +151,7 @@ const CATEGORY: Record<Status, RecordCategory> = {
   paused: "neutral", stopped: "neutral", partial: "neutral", cancelled: "neutral", interrupted: "neutral", detached: "neutral", unknown: "neutral",
 };
 /** Terminal for monotonicity. `paused` may legitimately resume; `unknown` is not evidence. */
-const FINAL = new Set<Status>(["completed", "failed", "rejected", "stopped", "partial"]);
+const FINAL = new Set<Status>(["completed", "failed", "rejected", "stopped", "partial", "cancelled", "interrupted"]);
 
 interface Tracked {
   key: string;
@@ -164,6 +165,10 @@ interface Tracked {
   sortTime?: number;
   parentId?: string;
   durationMs?: number;
+  observedAt?: number;
+  childId?: string;
+  workflowKey?: string;
+  noticeSource?: string;
   tokens?: string;
   authority?: number;
   stale: boolean;
@@ -354,6 +359,7 @@ type Link = "idle" | "connecting" | "bound" | "down";
 export function createMonitor(options: MonitorOptions): Monitor {
   const { events } = options;
   const uuid = options.uuid ?? (() => globalThis.crypto.randomUUID());
+  const now = options.now ?? Date.now;
 
   let disposed = false;
   let started = false;
@@ -365,6 +371,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
 
   let tracked = new Map<string, Tracked>();
   let foreground = new Map<string, Tracked>();
+  let notices = new Map<string, Tracked>();
   let callParents = new Map<string, string>();
   let retiredCalls = new Set<string>();
   let foregroundNotes: string[] = [];
@@ -376,6 +383,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
 
   let dirty = false;
   let coalesceTimer: ReturnType<typeof setTimeout> | undefined;
+  let elapsedTimer: ReturnType<typeof setTimeout> | undefined;
   let pingToken: object | undefined;
   let statusToken: object | undefined;
   let cancelPing: (() => void) | undefined;
@@ -384,6 +392,8 @@ export function createMonitor(options: MonitorOptions): Monitor {
 
   const changed = (): void => {
     if (disposed) return;
+    clearElapsed();
+    scheduleElapsed();
     try { options.onChange?.(); } catch { /* presentation errors must not break the monitor */ }
   };
   const currentSession = (): MonitorSession | undefined => {
@@ -408,10 +418,60 @@ export function createMonitor(options: MonitorOptions): Monitor {
     s?.();
   };
 
+  const selected = (): Tracked[] => {
+    const fgParents = new Set([...foreground.values()].map((t) => t.parentId).filter((v): v is string => !!v));
+    const childrenParents = new Set([...notices.values()].filter((t) => t.childId || t.workflowKey).map((t) => t.parentId!));
+    const asyncRows = [...tracked.values()].filter((t) => !t.parentId || (!fgParents.has(t.parentId) && !childrenParents.has(t.parentId)));
+    const noticeRows = [...notices.values()].filter((t) => {
+      if (!t.parentId || fgParents.has(t.parentId)) return false;
+      if (t.childId || t.workflowKey) return true;
+      if (childrenParents.has(t.parentId)) return false;
+      const same = asyncRows.filter((a) => a.parentId === t.parentId);
+      return same.length === 0 || (t.noticeSource !== "foreground" && t.status !== "unknown" && same.length === 1 && same[0]?.path.length === 1);
+    });
+    const aggregateParents = new Set(noticeRows.filter((t) => !t.childId && !t.workflowKey).map((t) => t.parentId));
+    const mergedNotices = noticeRows.map((t) => {
+      if (t.childId || t.workflowKey) return t;
+      const root = asyncRows.find((a) => a.parentId === t.parentId && a.path.length === 1);
+      return root ? { ...root, ...t, task: t.task ?? root.task, model: t.model ?? root.model } as Tracked : t;
+    });
+    const fgRows = [...foreground.values()];
+    const noticeChildren = [...notices.values()].filter((t) => t.childId || t.workflowKey);
+    const aliasesMatch = (f: Tracked, n: Tracked): boolean => f.parentId === n.parentId &&
+      ((!!f.childId && f.childId === n.childId) || (!!f.workflowKey && f.workflowKey === n.workflowKey)) &&
+      !(f.childId && n.childId && f.childId !== n.childId) &&
+      !(f.workflowKey && n.workflowKey && f.workflowKey !== n.workflowKey);
+    const mergedForeground = fgRows.map((f) => {
+      if (f.authority === 2 && f.status !== "detached") return f;
+      const matches = noticeChildren.filter((n) => aliasesMatch(f, n));
+      if (matches.length !== 1 || fgRows.filter((other) => aliasesMatch(other, matches[0]!)).length !== 1) return f;
+      const n = matches[0]!;
+      return n.status === "unknown" ? f : { ...f, status: n.status, ...(n.sortTime !== undefined ? { sortTime: n.sortTime } : {}) };
+    });
+    return asyncRows.filter((t) => !aggregateParents.has(t.parentId)).concat(mergedNotices, mergedForeground);
+  };
+
+  const elapsed = (t: Tracked, time: number): number | undefined => {
+    if (t.status !== "running" || t.stale) return t.durationMs ?? (t.startedAt !== undefined && t.endedAt !== undefined && t.endedAt >= t.startedAt ? t.endedAt - t.startedAt : undefined);
+    if (t.durationMs !== undefined && t.observedAt !== undefined) return t.durationMs + Math.max(0, time - t.observedAt);
+    if (t.startedAt !== undefined && time >= t.startedAt) return time - t.startedAt;
+    return t.durationMs;
+  };
+  const clearElapsed = (): void => {
+    if (elapsedTimer !== undefined) clearTimeout(elapsedTimer);
+    elapsedTimer = undefined;
+  };
+  const scheduleElapsed = (): void => {
+    if (disposed || !started || rebuilding || elapsedTimer !== undefined || !sameSession(boundSession, currentSession())) return;
+    if (!selected().some((t) => t.status === "running" && !t.stale && (t.startedAt !== undefined || (t.durationMs !== undefined && t.observedAt !== undefined)))) return;
+    elapsedTimer = setTimeout(() => { elapsedTimer = undefined; changed(); }, 1000);
+    (elapsedTimer as { unref?: () => void }).unref?.();
+  };
+
   const foregroundKey = (scope: string, index: number, parent: boolean): string =>
     `${parent ? "foreground" : "tool"}:${JSON.stringify([scope, index])}`;
 
-  const observeTool = (callValue: unknown, value: unknown, final: boolean): void => {
+  const observeTool = (callValue: unknown, value: unknown, final: boolean, sortTime?: number): void => {
     if (disposed || !started || !sameSession(boundSession, currentSession())) return;
     const call = safeId(callValue);
     if (!call || (!rebuilding && retiredCalls.has(call))) return;
@@ -466,7 +526,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       else status = "unknown";
       const authority = final ? 2 : 1;
       if (prev && (prev.authority ?? 0) > authority) continue;
-      if (prev && (prev.authority ?? 0) === 2 && final && prev.status !== status) { foregroundNotes = ["conflicting foreground terminal reports ignored"]; continue; }
+      if (prev && (prev.authority ?? 0) === 2 && final && prev.status !== status && prev.status !== "detached") { foregroundNotes = ["conflicting foreground terminal reports ignored"]; continue; }
       const duration = nonNegInt(summary?.durationMs) ?? nonNegInt(p?.durationMs);
       const usage = isRec(row.usage) ? row.usage : undefined;
       const input = nonNegInt(usage?.input) ?? nonNegInt(p?.inputTokens);
@@ -476,13 +536,18 @@ export function createMonitor(options: MonitorOptions): Monitor {
       const task = rawText(row.task) ?? rawText(p?.task);
       const agent = rawText(row.agent) ?? rawText(p?.agent) ?? rawText(summary?.agent);
       const model = rawText(row.model) ?? rawText(p?.model) ?? rawText(summary?.model);
+      const childId = safeId(row.runId);
+      const workflowKey = safeId(row.workflowKey);
       foreground.set(key, {
         ...prev, key, path: [call, String(index)], status, stale: false, authority,
         ...(scope ? { parentId: scope } : {}),
         ...(task ? { task } : {}),
         ...(agent ? { agent } : {}),
         ...(model ? { model } : {}),
-        ...(duration !== undefined ? { durationMs: duration } : {}),
+        ...(duration !== undefined ? { durationMs: duration, ...(status === "running" && !final ? { observedAt: now() } : {}) } : {}),
+        ...(childId && childId !== "unavailable" ? { childId } : {}),
+        ...(workflowKey && workflowKey !== "unavailable" ? { workflowKey } : {}),
+        ...(sortTime !== undefined ? { sortTime } : {}),
         ...(tokens !== undefined ? { tokens } : {}),
       });
     }
@@ -494,22 +559,89 @@ export function createMonitor(options: MonitorOptions): Monitor {
     }
     if (malformed || (Array.isArray(details?.results) && details.results.length > MAX_CHILDREN)) foregroundNotes = ["foreground results partially unavailable"];
     if (scope && [...foreground.values()].some((t) => t.parentId === scope)) {
-      for (const [key, t] of tracked) if (t.parentId === scope) tracked.delete(key);
+      for (const [key, t] of tracked) if (t.parentId === scope) { tracked.delete(key); foregroundNotes = ["foreground representation may have partial coverage"]; }
     }
     prune();
     changed();
   };
 
-  const observeMessage = (message: unknown): void => {
-    if (!isRec(message) || message.role !== "toolResult" || message.toolName !== "subagent") return;
-    observeTool(message.toolCallId, message, true);
+  const observeNotice = (details: unknown, sortTime?: number): void => {
+    if (disposed || !started || !sameSession(boundSession, currentSession()) || !isRec(details) || !Array.isArray(details.runs)) return;
+    let partial = details.runs.length > MAX_RUNS;
+    for (const run of details.runs.slice(0, MAX_RUNS)) {
+      if (!isRec(run)) { partial = true; continue; }
+      const parent = safeId(run.runId);
+      if (!parent || parent === "unavailable") { partial = true; continue; }
+      const children = Array.isArray(run.childRuns) ? run.childRuns.slice(0, MAX_CHILDREN) : [];
+      if (Array.isArray(run.childRuns) && run.childRuns.length > MAX_CHILDREN) partial = true;
+      const valid = children.flatMap((child) => {
+        if (!isRec(child)) { partial = true; return []; }
+        const id = safeId(child.runId);
+        const workflowKey = safeId(child.workflowKey);
+        const childId = id === "unavailable" ? undefined : id;
+        const wk = workflowKey === "unavailable" ? undefined : workflowKey;
+        if (!childId && !wk) { partial = true; return []; }
+        return [{ child, childId, workflowKey: wk }];
+      });
+      const duplicate = (v: typeof valid[number]): boolean => valid.filter((other) =>
+        (!!v.childId && other.childId === v.childId) || (!!v.workflowKey && other.workflowKey === v.workflowKey)).length !== 1;
+      if (valid.some(duplicate)) partial = true;
+      const usable = valid.filter((v) => !duplicate(v));
+      if (children.length && !usable.length) partial = true;
+      const entries = usable.length ? usable : children.length ? [] : [{ child: run, childId: undefined, workflowKey: undefined }];
+      for (const item of entries) {
+        const aliases = [...notices.values()].filter((n) => n.parentId === parent &&
+          ((!!item.childId && n.childId === item.childId) || (!!item.workflowKey && n.workflowKey === item.workflowKey)) &&
+          !(item.childId && n.childId && item.childId !== n.childId) &&
+          !(item.workflowKey && n.workflowKey && item.workflowKey !== n.workflowKey));
+        if (aliases.length > 1) { partial = true; continue; }
+        const key = aliases[0]?.key ?? `notice:${JSON.stringify([parent, item.childId ? "id" : item.workflowKey ? "workflow" : "run", item.childId ?? item.workflowKey ?? ""] )}`;
+        const prev = notices.get(key);
+        if (prev && ((item.childId && prev.childId && item.childId !== prev.childId) || (item.workflowKey && prev.workflowKey && item.workflowKey !== prev.workflowKey))) { partial = true; continue; }
+        const status = typeof item.child.status === "string" ? STATE_MAP[item.child.status] ?? "unknown" : "unknown";
+        if (prev && FINAL.has(prev.status) && prev.status !== status) continue;
+        const agent = rawText(item.child.agent);
+        const duration = usable.length ? undefined : nonNegInt(run.durationMs);
+        notices.set(key, { ...prev, key, path: [parent], parentId: parent, status, stale: false,
+          ...(item.childId ? { childId: item.childId } : {}),
+          ...(item.workflowKey ? { workflowKey: item.workflowKey } : {}),
+          ...(agent ? { agent } : {}),
+          ...(typeof run.source === "string" ? { noticeSource: run.source } : {}),
+          ...(duration !== undefined ? { durationMs: duration } : {}),
+          ...(sortTime !== undefined ? { sortTime } : {}),
+        });
+      }
+      if (usable.length) for (const [key, t] of tracked) if (t.parentId === parent) { tracked.delete(key); partial = true; }
+      if (!usable.length && !children.length && [...foreground.values()].some((t) => t.parentId === parent)) {
+        partial = true;
+      }
+    }
+    if (partial) foregroundNotes = ["notice representation may have partial coverage"];
+    prune();
+    changed();
+  };
+
+  const timestamp = (value: unknown): number | undefined => {
+    if (typeof value === "number") return nonNegInt(value);
+    if (typeof value !== "string" || value.length > 40) return undefined;
+    const parsed = Date.parse(value);
+    return nonNegInt(parsed);
+  };
+  const observeMessage = (message: unknown, entryTime?: number): void => {
+    if (!isRec(message)) return;
+    const time = entryTime ?? timestamp(message.timestamp);
+    if (message.role === "toolResult" && message.toolName === "subagent") observeTool(message.toolCallId, message, true, time);
+    else if (message.role === "custom" && message.customType === "subagent-notify") observeNotice(message.details, time);
   };
 
   const rebuildBranch = (): void => {
     rebuilding = true;
     try {
       for (const entry of options.getBranch?.() ?? []) {
-        if (isRec(entry) && entry.type === "message") observeMessage(entry.message);
+        if (!isRec(entry)) continue;
+        const time = timestamp(entry.timestamp);
+        if (entry.type === "message") observeMessage(entry.message, time);
+        else if (entry.type === "custom_message" && entry.customType === "subagent-notify") observeNotice(entry.details, time);
       }
     } catch { foregroundNotes = ["current branch history unavailable"]; }
     finally { rebuilding = false; }
@@ -594,8 +726,10 @@ export function createMonitor(options: MonitorOptions): Monitor {
   const reconcile = (incoming: Map<string, Tracked>, outNotes: string[]): void => {
     let conflicting = 0;
     const foregroundParents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
+    const noticeParents = new Set([...notices.values()].filter((t) => t.childId || t.workflowKey).map((t) => t.parentId));
+    let superseded = false;
     for (const [key, next] of incoming) {
-      if (next.parentId && foregroundParents.has(next.parentId)) continue;
+      if (next.parentId && (foregroundParents.has(next.parentId) || noticeParents.has(next.parentId))) { superseded = true; continue; }
       const prev = tracked.get(key);
       if (prev && FINAL.has(prev.status)) {
         if (next.status !== prev.status && FINAL.has(next.status)) conflicting += 1;
@@ -604,20 +738,31 @@ export function createMonitor(options: MonitorOptions): Monitor {
       tracked.set(key, next);
     }
     for (const [key, prev] of tracked) {
-      if (!incoming.has(key) && CATEGORY[prev.status] === "active") prev.stale = true;
+      if (prev.path.length === 1 && prev.parentId && [...incoming.values()].some((next) => next.parentId === prev.parentId && next.path.length > 1)) {
+        tracked.delete(key);
+        outNotes.push("superseding representation may have partial coverage");
+        continue;
+      }
+      if (!incoming.has(key) && CATEGORY[prev.status] === "active" && !prev.stale) {
+        const frozen = elapsed(prev, now());
+        if (frozen !== undefined) prev.durationMs = frozen;
+        prev.stale = true;
+      }
     }
     if (conflicting) outNotes.push(`${conflicting} conflicting terminal reports ignored`);
+    if (superseded) outNotes.push("superseding representation may have partial coverage");
     prune();
   };
 
   const prune = (): void => {
-    const parents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
-    const inactive = [...tracked.values()].filter((t) => !t.parentId || !parents.has(t.parentId)).concat([...foreground.values()]).filter((t) => CATEGORY[t.status] !== "active").sort(byRecency);
-    if (inactive.length <= MAX_NON_ACTIVE) return;
-    for (const t of inactive.slice(MAX_NON_ACTIVE)) { tracked.delete(t.key); foreground.delete(t.key); }
+    const effective = new Map(selected().map((t) => [t.key, t]));
+    const inactive = [...tracked.values(), ...foreground.values(), ...notices.values()].map((t) => effective.get(t.key) ?? t).filter((t) => CATEGORY[t.status] !== "active").sort(byRecency);
+    if (inactive.length > MAX_NON_ACTIVE) {
+      for (const t of inactive.slice(MAX_NON_ACTIVE)) { tracked.delete(t.key); foreground.delete(t.key); notices.delete(t.key); }
+      historyLimited = true;
+    }
     const retainedCalls = new Set([...foreground.values()].map((t) => t.path[0]));
     for (const call of callParents.keys()) if (!retainedCalls.has(call)) callParents.delete(call);
-    historyLimited = true;
   };
 
   // -- connection flow -----------------------------------------------------
@@ -695,6 +840,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       started = true;
       boundSession = currentSession();
       rebuildBranch();
+      scheduleElapsed();
       // Known names first, so nothing is missed between ping and status.
       subs.set(RPC_READY_EVENT, listen(RPC_READY_EVENT, true));
       subs.set(JOBS_CHANGED_EVENT, listen(JOBS_CHANGED_EVENT, false));
@@ -705,19 +851,18 @@ export function createMonitor(options: MonitorOptions): Monitor {
       if (started && !sameSession(boundSession, currentSession())) {
         return { state: "unavailable", records: [], diagnostics: ["session changed; awaiting session start"] };
       }
-      if (!loaded && foreground.size === 0) {
+      if (!loaded && foreground.size === 0 && notices.size === 0) {
         return {
           state: link === "down" ? "unavailable" : started ? "connecting" : "pending",
           records: [],
           ...(problem ? { diagnostics: [problem] } : {}),
         };
       }
-      const parents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
-      const list = [...tracked.values()].filter((t) => !t.parentId || !parents.has(t.parentId)).concat([...foreground.values()]).sort(byRecency);
+      const list = selected().sort(byRecency);
       let stale = 0;
       const records: SnapshotRecord[] = list.map((t) => {
         if (t.stale) stale += 1;
-        const duration = formatDuration(t.startedAt, t.endedAt, t.durationMs);
+        const duration = formatDuration(undefined, undefined, elapsed(t, now()));
         return {
           key: t.key,
           category: CATEGORY[t.status],
@@ -734,7 +879,6 @@ export function createMonitor(options: MonitorOptions): Monitor {
         ...(stale ? [`${stale} active not in latest projection`] : []),
         ...notes,
         ...foregroundNotes,
-        "notices, cost and elapsed refresh pending",
       ];
       return {
         state: "ready",
@@ -754,8 +898,9 @@ export function createMonitor(options: MonitorOptions): Monitor {
     resetBranch(): void {
       if (disposed || !started) return;
       cancelInflight();
+      clearElapsed();
       retiredCalls = new Set([...callParents.keys(), ...[...foreground.values()].map((t) => t.path[0]!).filter(Boolean)]);
-      tracked.clear(); foreground.clear(); callParents.clear(); fleet = undefined; notes = []; foregroundNotes = []; historyLimited = false; loaded = false; problem = undefined;
+      tracked.clear(); foreground.clear(); notices.clear(); callParents.clear(); fleet = undefined; notes = []; foregroundNotes = []; historyLimited = false; loaded = false; problem = undefined;
       boundSession = currentSession();
       rebuildBranch();
       changed();
@@ -769,10 +914,11 @@ export function createMonitor(options: MonitorOptions): Monitor {
       if (disposed) return;
       disposed = true;
       cancelInflight();
+      clearElapsed();
       for (const unsub of subs.values()) unsub();
       subs.clear();
       tracked = new Map();
-      foreground.clear(); callParents.clear(); retiredCalls.clear();
+      foreground.clear(); notices.clear(); callParents.clear(); retiredCalls.clear();
     },
   };
 }

@@ -119,7 +119,7 @@ describe("connection and load order", () => {
     expect(s.state).toBe("ready");
     expect(s.records).toHaveLength(1);
     expect(s.records[0]).toMatchObject({ category: "active", statusLabel: "running", task: "label run-1" });
-    expect(s.diagnostics).toContain("notices, cost and elapsed refresh pending");
+    expect(s.diagnostics?.join(" ")).not.toContain("coverage pending");
     for (const name of Object.values(EVENTS).filter((n) => n.startsWith("subagent:"))) {
       expect(p.bus.count(name)).toBe(1);
     }

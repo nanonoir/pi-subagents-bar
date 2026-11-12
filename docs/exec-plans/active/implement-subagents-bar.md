@@ -46,7 +46,8 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Sidebar increment validated and committed: public v1 publisher, safe rows/overflow, summary commands; 28 focused tests and strict typecheck passed.
 - [x] Background monitor validated and committed: public ping/status + events, rich async snapshots, separate fleet counts, coalescing/timeouts/session guards, conservative stale/terminal state and 100-entry nonactive retention. No accumulated active cap.
 - [x] Core foreground/tool-result history validated and committed: explicit indexed identity, promotion, child metrics, async representation suppression, current branch rebuild and RPC-independent coverage (66 focused tests).
-- [ ] Structured notices, cross-source completion reconciliation and optional usage/elapsed enrichment complete.
+- [x] Structured notices, cross-source completion reconciliation and elapsed-only refresh complete (74 focused tests passed).
+- [ ] Optional exact-ID terminal cost enrichment complete.
 - [ ] Independent review and corrections complete.
 - [ ] Compatibility smoke, docs reconciliation and plan closure complete.
 
@@ -70,6 +71,8 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 2026-11-12: Fresh Terra-high implementer d0fc886f-6723-45e4-91a9-308d0e51afc2 completed core foreground and current-branch toolResult history with localized changes. Parent inspected source and independently ran typecheck, four explicit focused Vitest files (66 tests passed), and diff --check. Notices/cost/elapsed refresh remain deliberately marked pending. Same-session late events for previously unseen tool IDs after branch navigation cannot be perfectly attributed using the untagged public event alone; document rather than invent correlation.
 
+2026-11-12: Notice/elapsed increment 2499547b-c3f4-494c-870f-003e34b155a8 completed. Parent diagnosed repeated edit failures as ambiguous/stale exact replacement batches and steered smaller edits; source and tests preserved. A failing root-to-children duplicate regression was fixed rather than weakened. Parent independently ran strict typecheck, five focused Vitest files (74 tests passed), and diff --check. Provider-first real protocol smoke also passed 25/25 on b8eb1a5; final smoke remains.
+
 ## Outcome
 
-In progress; sidebar/background monitor and foreground/toolResult history complete, headless protocol smoke verified on ca67a89. User-authorized implementer route remains openai/gpt-6.1-terra:high. Structured notices, optional metrics/timing, final smoke, README and independent review remain.
+In progress; core monitor, foreground/history/notices and display-only elapsed refresh complete. User-authorized implementer route remains openai/gpt-6.1-terra:high. Optional cost metrics, final smoke, README and independent review remain.
