@@ -63,6 +63,10 @@ First-increment reviewer `95701940-4e1d-4f44-999b-442cf11e8983` encountered an A
 
 Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactory`; use public `discoverAndLoadExtensions`. `ModelRegistry` requires a ModelRuntime. Do not trust suggested `PI_OFFLINE` as a credential/network isolation guarantee for subscription panel; its TUI startup reads credential contexts. Smoke must isolate environment and skip credential-bearing startup or use justified injected public seams.
 
+2026-11-12: Isolated smoke implementation corrected after parent rejected permissive checks that hid simulated Atelier errors. Final scope is real SDK loader/runner + public RPC + real Atelier registry validator, NOT Atelier's live UI. Both load orders passed 25 checks per specialist. Parent independently reproduced bar-first (25/25) after fixing independent pi-tui resolution with an explicit host alias. Script is integrated at scripts/provider-smoke.mjs; final code will be rechecked. Subscription lifecycle is deliberately skipped to avoid credentials/polling; only registration coexistence is covered. No network/model/spawn work occurred.
+
+2026-11-12: Foreground/history run b9a4b35d-fe6b-4552-b696-d1bace2ff6c1 spent ~29 minutes on analysis/drafts then failed with upstream Claude 429. Native terminal failure and clean Git tree confirmed; no implementation changes or test evidence from that run. Parent narrowed scope before failure; scratch /tmp/new_mid.ts is diagnostic only, not accepted code. User explicitly authorized all continuing implementer work on openai/gpt-6.1-terra:high. Continue fresh bounded increments: foreground tool records and branch history first; then notices/cross-source reconciliation and optional metrics/timing.
+
 ## Outcome
 
-In progress; sidebar and background monitor seams complete. Foreground/history, installed-provider smoke, README and independent review remain.
+In progress; sidebar/background monitor complete, headless protocol smoke verified on ca67a89. User-authorized implementer route is now openai/gpt-6.1-terra:high. Foreground/history, final smoke, README and independent review remain.
