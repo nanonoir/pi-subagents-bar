@@ -45,7 +45,8 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Technical design recorded in docs/design-docs/subagents-bar.md. Identity-rich async/foreground mode avoids uncorrelatable fleet duplicates; fleet counts remain separate. API limitations are explicit.
 - [x] Sidebar increment validated and committed: public v1 publisher, safe rows/overflow, summary commands; 28 focused tests and strict typecheck passed.
 - [x] Background monitor validated and committed: public ping/status + events, rich async snapshots, separate fleet counts, coalescing/timeouts/session guards, conservative stale/terminal state and 100-entry nonactive retention. No accumulated active cap.
-- [ ] Foreground/history validated and committed.
+- [x] Core foreground/tool-result history validated and committed: explicit indexed identity, promotion, child metrics, async representation suppression, current branch rebuild and RPC-independent coverage (66 focused tests).
+- [ ] Structured notices, cross-source completion reconciliation and optional usage/elapsed enrichment complete.
 - [ ] Independent review and corrections complete.
 - [ ] Compatibility smoke, docs reconciliation and plan closure complete.
 
@@ -67,6 +68,8 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 2026-11-12: Foreground/history run b9a4b35d-fe6b-4552-b696-d1bace2ff6c1 spent ~29 minutes on analysis/drafts then failed with upstream Claude 429. Native terminal failure and clean Git tree confirmed; no implementation changes or test evidence from that run. Parent narrowed scope before failure; scratch /tmp/new_mid.ts is diagnostic only, not accepted code. User explicitly authorized all continuing implementer work on openai/gpt-6.1-terra:high. Continue fresh bounded increments: foreground tool records and branch history first; then notices/cross-source reconciliation and optional metrics/timing.
 
+2026-11-12: Fresh Terra-high implementer d0fc886f-6723-45e4-91a9-308d0e51afc2 completed core foreground and current-branch toolResult history with localized changes. Parent inspected source and independently ran typecheck, four explicit focused Vitest files (66 tests passed), and diff --check. Notices/cost/elapsed refresh remain deliberately marked pending. Same-session late events for previously unseen tool IDs after branch navigation cannot be perfectly attributed using the untagged public event alone; document rather than invent correlation.
+
 ## Outcome
 
-In progress; sidebar/background monitor complete, headless protocol smoke verified on ca67a89. User-authorized implementer route is now openai/gpt-6.1-terra:high. Foreground/history, final smoke, README and independent review remain.
+In progress; sidebar/background monitor and foreground/toolResult history complete, headless protocol smoke verified on ca67a89. User-authorized implementer route remains openai/gpt-6.1-terra:high. Structured notices, optional metrics/timing, final smoke, README and independent review remain.

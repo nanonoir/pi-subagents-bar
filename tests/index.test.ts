@@ -29,7 +29,7 @@ function setup() {
   return {
     sent, listeners, command, handlers,
     start: () => handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {
-      sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/s1.jsonl" },
+      sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/s1.jsonl", getBranch: () => [] },
     }),
     stop: () => handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, {}),
     ctx,
@@ -53,7 +53,7 @@ describe("extension lifecycle", () => {
   it("registers only the command and no tools/panel until session start", () => {
     const t = setup();
     expect(t.command.name).toBe("subagents-bar");
-    expect([...t.handlers.keys()].sort()).toEqual(["session_shutdown", "session_start", "session_tree"]);
+    expect([...t.handlers.keys()].sort()).toEqual(["message_end", "session_shutdown", "session_start", "session_tree", "tool_execution_end", "tool_execution_update"]);
     expect(t.sent).toHaveLength(0);
   });
 
@@ -78,6 +78,17 @@ describe("extension lifecycle", () => {
     t.stop();
     expect(t.listeners.size).toBe(0);
     expect(t.sent.filter((e) => e?.type === "unregister")).toHaveLength(2);
+  });
+
+  it("observes tool updates without RPC and ignores a different session context", () => {
+    const t = setup(); t.start();
+    const ctx = (id: string) => ({ sessionManager: { getSessionId: () => id, getSessionFile: () => `/${id}.jsonl` } });
+    const event = { toolName: "subagent", toolCallId: "call", partialResult: { details: { runId: "run", results: [{ index: 0, task: "live", exitCode: 0, progress: { status: "running" } }] } } };
+    t.handlers.get("tool_execution_update")?.(event, ctx("other"));
+    expect(t.registers()).toHaveLength(1);
+    t.handlers.get("tool_execution_update")?.(event, ctx("s1"));
+    expect(JSON.stringify(t.registers().at(-1))).toContain("live");
+    t.stop();
   });
 
   it("answers discovery only while running", () => {

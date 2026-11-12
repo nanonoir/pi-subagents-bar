@@ -21,17 +21,26 @@ export default function subagentsBar(pi: ExtensionAPI): void {
   let panel: AtelierPanelController | undefined;
   let monitor: Monitor | undefined;
   let expanded = true; // in-memory preference only
+  let sessionManager: ExtensionContext["sessionManager"] | undefined;
+  const sameContext = (ctx: ExtensionContext): boolean => {
+    try {
+      return !!sessionManager && ctx.sessionManager.getSessionId() === sessionManager.getSessionId() &&
+        (ctx.sessionManager.getSessionFile() ?? null) === (sessionManager.getSessionFile() ?? null);
+    } catch { return false; }
+  };
 
   const dispose = (): void => {
     const m = monitor;
     const p = panel;
     monitor = panel = undefined;
+    sessionManager = undefined;
     m?.dispose(); // invalidates the generation before the panel goes away
     p?.dispose();
   };
 
   pi.on("session_start", (_event, ctx: ExtensionContext) => {
     dispose();
+    sessionManager = ctx.sessionManager;
     const created = createMonitor({
       events: pi.events,
       // Read live so a replaced/stale context never supplies another session's identity.
@@ -40,6 +49,7 @@ export default function subagentsBar(pi: ExtensionAPI): void {
         const sessionId = sm.getSessionId();
         return sessionId ? { sessionId, sessionFile: sm.getSessionFile() ?? null } : undefined;
       },
+      getBranch: () => ctx.sessionManager.getBranch(),
       onChange: () => {
         if (monitor === created) panel?.refresh();
       },
@@ -48,7 +58,14 @@ export default function subagentsBar(pi: ExtensionAPI): void {
     created.start(); // synchronous replies land before the first publish; no duplicate register
     panel = createAtelierPanel(pi.events, { expanded, snapshot: () => created.snapshot() });
   });
-  pi.on("session_tree", () => monitor?.resetBranch());
+  pi.on("session_tree", (_event, ctx) => { if (sameContext(ctx)) monitor?.resetBranch(); });
+  pi.on("tool_execution_update", (event, ctx) => {
+    if (sameContext(ctx) && event.toolName === "subagent") monitor?.observeTool(event.toolCallId, event.partialResult, false);
+  });
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (sameContext(ctx) && event.toolName === "subagent") monitor?.observeTool(event.toolCallId, event.result, true);
+  });
+  pi.on("message_end", (event, ctx) => { if (sameContext(ctx)) monitor?.observeMessage(event.message); });
   pi.on("session_shutdown", dispose);
 
   pi.registerCommand(COMMAND_NAME, {

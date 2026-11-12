@@ -1,5 +1,5 @@
 /**
- * Identity-rich BACKGROUND monitor for pi-subagents.
+ * Identity-rich monitor for pi-subagents.
  *
  * Talks to the provider only through the public `subagents:rpc:v1:*` event
  * bus contract (ping / status), validates every payload at the boundary and
@@ -8,8 +8,8 @@
  * async-status-snapshot nodes with explicit scoped IDs become records. Fleet
  * aggregate counts are kept separate and non-additive.
  *
- * Foreground tool progress and branch history are NOT covered yet; the
- * snapshot says so explicitly.
+ * Foreground tool results and current-branch history use indexed identities.
+ * Structured notices, cost enrichment and elapsed refresh remain pending.
  */
 import type { EventTransport, MonitorSnapshot, RecordCategory, SnapshotRecord } from "./types.ts";
 
@@ -38,6 +38,7 @@ export interface MonitorOptions {
   events: EventTransport;
   /** Reads the live session identity; may throw when the context is stale. */
   getSession: () => MonitorSession | undefined;
+  getBranch?: () => readonly unknown[];
   /** Called after any snapshot-relevant change (never after dispose). */
   onChange?: () => void;
   uuid?: () => string;
@@ -51,6 +52,8 @@ export interface Monitor {
   refresh(): void;
   /** Same session, new branch: drop pending work and re-read. */
   resetBranch(): void;
+  observeTool(toolCallId: unknown, result: unknown, final: boolean): void;
+  observeMessage(message: unknown): void;
   dispose(): void;
 }
 
@@ -133,18 +136,18 @@ function validatePing(data: unknown, session: MonitorSession | undefined): PingR
 
 const SNAPSHOT_KIND = "pi-subagents.async-status-snapshot";
 
-type Status = "queued" | "running" | "completed" | "failed" | "rejected" | "paused" | "stopped" | "partial" | "unknown";
+type Status = "queued" | "running" | "completed" | "failed" | "rejected" | "paused" | "stopped" | "partial" | "cancelled" | "interrupted" | "detached" | "unknown";
 
 const STATE_MAP: Record<string, Status> = {
   queued: "queued", pending: "queued", running: "running",
   complete: "completed", completed: "completed",
   failed: "failed", error: "failed", rejected: "rejected",
-  paused: "paused", stopped: "stopped", partial: "partial",
+  paused: "paused", stopped: "stopped", partial: "partial", cancelled: "cancelled", interrupted: "interrupted", detached: "detached",
 };
 const CATEGORY: Record<Status, RecordCategory> = {
   queued: "active", running: "active", completed: "success",
   failed: "failed", rejected: "failed",
-  paused: "neutral", stopped: "neutral", partial: "neutral", unknown: "neutral",
+  paused: "neutral", stopped: "neutral", partial: "neutral", cancelled: "neutral", interrupted: "neutral", detached: "neutral", unknown: "neutral",
 };
 /** Terminal for monotonicity. `paused` may legitimately resume; `unknown` is not evidence. */
 const FINAL = new Set<Status>(["completed", "failed", "rejected", "stopped", "partial"]);
@@ -159,6 +162,10 @@ interface Tracked {
   startedAt?: number;
   endedAt?: number;
   sortTime?: number;
+  parentId?: string;
+  durationMs?: number;
+  tokens?: string;
+  authority?: number;
   stale: boolean;
 }
 
@@ -211,8 +218,9 @@ function normalizeSnapshot(raw: unknown): Normalized | undefined {
       const startedAt = nonNegInt(node.startedAt);
       const endedAt = nonNegInt(node.endedAt);
       const updatedAt = nonNegInt(node.updatedAt);
+      const rootId = parent.length ? parent[0]?.slice(parent[0].indexOf(":") + 1) : id;
       const t: Tracked = {
-        key, path, status, stale: false,
+        key, path, status, stale: false, ...(rootId ? { parentId: rootId } : {}),
         ...(label ? { task: label } : {}),
         ...(agent && agent !== label ? { agent } : kind === "workflow" ? { agent: "workflow" } : {}),
         ...(rawText(node.model) ? { model: rawText(node.model)! } : {}),
@@ -267,9 +275,10 @@ function normalizeFleet(raw: unknown): FleetCounts | undefined {
 // Formatting
 // ---------------------------------------------------------------------------
 
-function formatDuration(startedAt: number | undefined, endedAt: number | undefined): string | undefined {
-  if (startedAt === undefined || endedAt === undefined || endedAt < startedAt) return undefined;
-  const total = Math.floor((endedAt - startedAt) / 1000);
+function formatDuration(startedAt: number | undefined, endedAt: number | undefined, durationMs?: number): string | undefined {
+  const ms = durationMs ?? (startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt ? endedAt - startedAt : undefined);
+  if (ms === undefined) return undefined;
+  const total = Math.floor(ms / 1000);
   const s = total % 60;
   const m = Math.floor(total / 60) % 60;
   const h = Math.floor(total / 3600);
@@ -355,6 +364,12 @@ export function createMonitor(options: MonitorOptions): Monitor {
   let info: ProviderInfo = { fleet: false, snapshot: false, events: [] };
 
   let tracked = new Map<string, Tracked>();
+  let foreground = new Map<string, Tracked>();
+  let callParents = new Map<string, string>();
+  let retiredCalls = new Set<string>();
+  let foregroundNotes: string[] = [];
+  let boundSession: MonitorSession | undefined;
+  let rebuilding = false;
   let fleet: FleetCounts | undefined;
   let notes: string[] = [];
   let historyLimited = false;
@@ -391,6 +406,113 @@ export function createMonitor(options: MonitorOptions): Monitor {
     cancelPing = cancelStatus = undefined;
     p?.();
     s?.();
+  };
+
+  const foregroundKey = (scope: string, index: number, parent: boolean): string =>
+    `${parent ? "foreground" : "tool"}:${JSON.stringify([scope, index])}`;
+
+  const observeTool = (callValue: unknown, value: unknown, final: boolean): void => {
+    if (disposed || !started || !sameSession(boundSession, currentSession())) return;
+    const call = safeId(callValue);
+    if (!call || (!rebuilding && retiredCalls.has(call))) return;
+    const wrapper = isRec(value) ? value : {};
+    const details = isRec(wrapper.details) ? wrapper.details : undefined;
+    const declaredCall = safeId(details?.toolCallId);
+    if (declaredCall && declaredCall !== call) return;
+    const parent = safeId(details?.runId);
+    const existingParent = callParents.get(call);
+    if (parent && existingParent && parent !== existingParent) {
+      foregroundNotes = ["conflicting foreground run identity ignored"];
+      changed();
+      return;
+    }
+    if (parent && !existingParent) {
+      callParents.set(call, parent);
+      for (const [key, record] of foreground) {
+        if (record.path[0] !== call || record.parentId) continue;
+        const promoted = foregroundKey(parent, Number(record.path[1]), true);
+        foreground.delete(key);
+        const prior = foreground.get(promoted);
+        if (!prior || (record.authority ?? 0) > (prior.authority ?? 0)) foreground.set(promoted, { ...record, key: promoted, parentId: parent });
+      }
+    }
+    const scope = parent ?? existingParent;
+    const rows = Array.isArray(details?.results) ? details.results.slice(0, MAX_CHILDREN) : [];
+    const indexes = new Map<number, number>();
+    for (const row of rows) if (isRec(row)) {
+      const i = nonNegInt(row.index);
+      if (i !== undefined) indexes.set(i, (indexes.get(i) ?? 0) + 1);
+    }
+    const progress = Array.isArray(details?.progress) ? details.progress.slice(0, MAX_CHILDREN) : [];
+    let malformed = false;
+    for (const row of rows) {
+      if (!isRec(row)) { malformed = true; continue; }
+      const index = nonNegInt(row.index);
+      if (index === undefined || indexes.get(index) !== 1) { malformed = true; continue; }
+      const key = foregroundKey(scope ?? call, index, !!scope);
+      const prev = foreground.get(key);
+      const matchingProgress = progress.filter((p) => isRec(p) && nonNegInt(p.index) === index);
+      const p = isRec(row.progress) ? row.progress : matchingProgress.length === 1 && isRec(matchingProgress[0]) ? matchingProgress[0] : undefined;
+      const summary = isRec(row.progressSummary) ? row.progressSummary : undefined;
+      let status: Status;
+      if (row.timedOut === true) status = "failed";
+      else if (row.cancelled === true) status = "cancelled";
+      else if (row.interrupted === true) status = "interrupted";
+      else if (row.stopped === true) status = "stopped";
+      else if (row.detached === true) status = "detached";
+      else if (final && typeof (summary?.status ?? p?.status) === "string" && ["failed", "stopped", "detached", "paused", "partial", "cancelled", "interrupted"].includes((summary?.status ?? p?.status) as string)) status = STATE_MAP[(summary?.status ?? p?.status) as string] ?? "unknown";
+      else if (!final) status = typeof p?.status === "string" ? STATE_MAP[p.status] ?? "unknown" : typeof summary?.status === "string" ? STATE_MAP[summary.status] ?? "unknown" : "running";
+      else if (typeof row.exitCode === "number" && Number.isSafeInteger(row.exitCode)) status = row.exitCode === 0 ? "completed" : "failed";
+      else status = "unknown";
+      const authority = final ? 2 : 1;
+      if (prev && (prev.authority ?? 0) > authority) continue;
+      if (prev && (prev.authority ?? 0) === 2 && final && prev.status !== status) { foregroundNotes = ["conflicting foreground terminal reports ignored"]; continue; }
+      const duration = nonNegInt(summary?.durationMs) ?? nonNegInt(p?.durationMs);
+      const usage = isRec(row.usage) ? row.usage : undefined;
+      const input = nonNegInt(usage?.input) ?? nonNegInt(p?.inputTokens);
+      const output = nonNegInt(usage?.output) ?? nonNegInt(p?.outputTokens);
+      const total = nonNegInt(usage?.totalTokens) ?? (nonNegInt(usage?.input) !== undefined && nonNegInt(usage?.output) !== undefined ? nonNegInt(usage?.input)! + nonNegInt(usage?.output)! : undefined) ?? nonNegInt(p?.tokens) ?? nonNegInt(summary?.tokens);
+      const tokens = total !== undefined ? `${total} tok` : input !== undefined && output !== undefined ? `${input + output} tok` : input !== undefined ? `${input} in` : output !== undefined ? `${output} out` : undefined;
+      const task = rawText(row.task) ?? rawText(p?.task);
+      const agent = rawText(row.agent) ?? rawText(p?.agent) ?? rawText(summary?.agent);
+      const model = rawText(row.model) ?? rawText(p?.model) ?? rawText(summary?.model);
+      foreground.set(key, {
+        ...prev, key, path: [call, String(index)], status, stale: false, authority,
+        ...(scope ? { parentId: scope } : {}),
+        ...(task ? { task } : {}),
+        ...(agent ? { agent } : {}),
+        ...(model ? { model } : {}),
+        ...(duration !== undefined ? { durationMs: duration } : {}),
+        ...(tokens !== undefined ? { tokens } : {}),
+      });
+    }
+    if (final) for (const record of foreground.values()) {
+      if (record.path[0] === call && CATEGORY[record.status] === "active" && !rows.some((r) => isRec(r) && nonNegInt(r.index) === Number(record.path[1]))) {
+        record.status = "unknown"; record.authority = 2;
+        foregroundNotes = ["tool ended without child result"];
+      }
+    }
+    if (malformed || (Array.isArray(details?.results) && details.results.length > MAX_CHILDREN)) foregroundNotes = ["foreground results partially unavailable"];
+    if (scope && [...foreground.values()].some((t) => t.parentId === scope)) {
+      for (const [key, t] of tracked) if (t.parentId === scope) tracked.delete(key);
+    }
+    prune();
+    changed();
+  };
+
+  const observeMessage = (message: unknown): void => {
+    if (!isRec(message) || message.role !== "toolResult" || message.toolName !== "subagent") return;
+    observeTool(message.toolCallId, message, true);
+  };
+
+  const rebuildBranch = (): void => {
+    rebuilding = true;
+    try {
+      for (const entry of options.getBranch?.() ?? []) {
+        if (isRec(entry) && entry.type === "message") observeMessage(entry.message);
+      }
+    } catch { foregroundNotes = ["current branch history unavailable"]; }
+    finally { rebuilding = false; }
   };
 
   // -- status flow ---------------------------------------------------------
@@ -471,7 +593,9 @@ export function createMonitor(options: MonitorOptions): Monitor {
   /** Merge an authoritative snapshot: terminal is monotonic, absence is stale not done. */
   const reconcile = (incoming: Map<string, Tracked>, outNotes: string[]): void => {
     let conflicting = 0;
+    const foregroundParents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
     for (const [key, next] of incoming) {
+      if (next.parentId && foregroundParents.has(next.parentId)) continue;
       const prev = tracked.get(key);
       if (prev && FINAL.has(prev.status)) {
         if (next.status !== prev.status && FINAL.has(next.status)) conflicting += 1;
@@ -487,9 +611,12 @@ export function createMonitor(options: MonitorOptions): Monitor {
   };
 
   const prune = (): void => {
-    const inactive = [...tracked.values()].filter((t) => CATEGORY[t.status] !== "active").sort(byRecency);
+    const parents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
+    const inactive = [...tracked.values()].filter((t) => !t.parentId || !parents.has(t.parentId)).concat([...foreground.values()]).filter((t) => CATEGORY[t.status] !== "active").sort(byRecency);
     if (inactive.length <= MAX_NON_ACTIVE) return;
-    for (const t of inactive.slice(MAX_NON_ACTIVE)) tracked.delete(t.key);
+    for (const t of inactive.slice(MAX_NON_ACTIVE)) { tracked.delete(t.key); foreground.delete(t.key); }
+    const retainedCalls = new Set([...foreground.values()].map((t) => t.path[0]));
+    for (const call of callParents.keys()) if (!retainedCalls.has(call)) callParents.delete(call);
     historyLimited = true;
   };
 
@@ -566,6 +693,8 @@ export function createMonitor(options: MonitorOptions): Monitor {
     start(): void {
       if (disposed || started) return;
       started = true;
+      boundSession = currentSession();
+      rebuildBranch();
       // Known names first, so nothing is missed between ping and status.
       subs.set(RPC_READY_EVENT, listen(RPC_READY_EVENT, true));
       subs.set(JOBS_CHANGED_EVENT, listen(JOBS_CHANGED_EVENT, false));
@@ -573,18 +702,22 @@ export function createMonitor(options: MonitorOptions): Monitor {
     },
 
     snapshot(): MonitorSnapshot {
-      if (!loaded) {
+      if (started && !sameSession(boundSession, currentSession())) {
+        return { state: "unavailable", records: [], diagnostics: ["session changed; awaiting session start"] };
+      }
+      if (!loaded && foreground.size === 0) {
         return {
           state: link === "down" ? "unavailable" : started ? "connecting" : "pending",
           records: [],
           ...(problem ? { diagnostics: [problem] } : {}),
         };
       }
-      const list = [...tracked.values()].sort(byRecency);
+      const parents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
+      const list = [...tracked.values()].filter((t) => !t.parentId || !parents.has(t.parentId)).concat([...foreground.values()]).sort(byRecency);
       let stale = 0;
       const records: SnapshotRecord[] = list.map((t) => {
         if (t.stale) stale += 1;
-        const duration = CATEGORY[t.status] === "active" ? undefined : formatDuration(t.startedAt, t.endedAt);
+        const duration = formatDuration(t.startedAt, t.endedAt, t.durationMs);
         return {
           key: t.key,
           category: CATEGORY[t.status],
@@ -593,13 +726,15 @@ export function createMonitor(options: MonitorOptions): Monitor {
           ...(t.agent ? { agent: t.agent } : {}),
           ...(t.model ? { model: t.model } : {}),
           ...(duration ? { duration } : {}),
+          ...(t.tokens ? { tokens: t.tokens } : {}),
         };
       });
       const diagnostics = [
         ...(problem ? [problem] : []),
         ...(stale ? [`${stale} active not in latest projection`] : []),
         ...notes,
-        "foreground/history coverage pending",
+        ...foregroundNotes,
+        "notices, cost and elapsed refresh pending",
       ];
       return {
         state: "ready",
@@ -618,8 +753,17 @@ export function createMonitor(options: MonitorOptions): Monitor {
 
     resetBranch(): void {
       if (disposed || !started) return;
+      cancelInflight();
+      retiredCalls = new Set([...callParents.keys(), ...[...foreground.values()].map((t) => t.path[0]!).filter(Boolean)]);
+      tracked.clear(); foreground.clear(); callParents.clear(); fleet = undefined; notes = []; foregroundNotes = []; historyLimited = false; loaded = false; problem = undefined;
+      boundSession = currentSession();
+      rebuildBranch();
+      changed();
       connect();
     },
+
+    observeTool,
+    observeMessage,
 
     dispose(): void {
       if (disposed) return;
@@ -628,6 +772,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       for (const unsub of subs.values()) unsub();
       subs.clear();
       tracked = new Map();
+      foreground.clear(); callParents.clear(); retiredCalls.clear();
     },
   };
 }
