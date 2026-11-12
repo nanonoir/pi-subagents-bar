@@ -44,7 +44,7 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Installed contracts and reference evidence complete: Pi 1.5.2, Atelier 0.18.0, pi-subagents 0.88.0; public v1 protocols, profile cycler 1.2.0/subscription panel 1.0.0 inspected read-only.
 - [x] Technical design recorded in docs/design-docs/subagents-bar.md. Identity-rich async/foreground mode avoids uncorrelatable fleet duplicates; fleet counts remain separate. API limitations are explicit.
 - [x] Sidebar increment validated and committed: public v1 publisher, safe rows/overflow, summary commands; 28 focused tests and strict typecheck passed.
-- [ ] Background monitor validated and committed.
+- [x] Background monitor validated and committed: public ping/status + events, rich async snapshots, separate fleet counts, coalescing/timeouts/session guards, conservative stale/terminal state and 100-entry nonactive retention. No accumulated active cap.
 - [ ] Foreground/history validated and committed.
 - [ ] Independent review and corrections complete.
 - [ ] Compatibility smoke, docs reconciliation and plan closure complete.
@@ -57,6 +57,12 @@ Not yet implemented. No tests run at baseline (npm test is a placeholder).
 
 2026-11-12: User explicitly reported Claude quota reset and authorized same-model recovery. Run `e89beacf-d494-40b2-b78a-97f941a776d2` completed the sidebar increment. Parent independently ran `npm run typecheck` and `npm run test:sidebar`: 28 tests passed. `git diff --check` passed. No provider/interactive smoke claimed. The initial panel honestly reports monitor integration pending. Smoke feasibility explorer completed; its recipe is advisory and must be checked against actual exported APIs before use.
 
+2026-11-12: Background increment completed by `d958b7c7-e562-4040-972d-f624527105e4`. Parent identified and rejected an accumulated 1000-active safety cap as violating FR-03/08. Correction run `6b221ca8-2f48-434d-93c9-f0d518ebfe31` removed it and added a 1200-active retention regression. Parent ran `npm run typecheck`, `npm run test:monitor` (32 tests), `npm run test:sidebar` (28 tests), and `git diff --check`, all passed. Implementer initially used an unfocused 59-test run; subsequent validation uses explicit relevant files/scripts. Foreground/history remains explicitly pending in the display.
+
+First-increment reviewer `95701940-4e1d-4f44-999b-442cf11e8983` encountered an Antigravity tool bridge warning (`bash`, no active streaming turn). Parent inspected native run state and instructed it not to bypass missing tool grants/alternate CLI or treat failed evidence as review success; final review still pending.
+
+Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactory`; use public `discoverAndLoadExtensions`. `ModelRegistry` requires a ModelRuntime. Do not trust suggested `PI_OFFLINE` as a credential/network isolation guarantee for subscription panel; its TUI startup reads credential contexts. Smoke must isolate environment and skip credential-bearing startup or use justified injected public seams.
+
 ## Outcome
 
-In progress; provider blocker cleared by user-confirmed quota reset. Sidebar seam complete; background monitor, foreground/history, installed-provider smoke, README and review remain.
+In progress; sidebar and background monitor seams complete. Foreground/history, installed-provider smoke, README and independent review remain.

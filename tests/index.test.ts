@@ -9,8 +9,14 @@ function setup() {
   let command: any;
   const pi = {
     events: {
-      on: (_c: string, h: (d: unknown) => void) => (listeners.add(h), () => listeners.delete(h)),
-      emit: (_c: string, d: unknown) => {
+      // Sidebar channel only; monitor RPC traffic is covered in monitor.test.ts.
+      on: (c: string, h: (d: unknown) => void) => {
+        if (c !== "pi-atelier:sidebar-panels") return () => undefined;
+        listeners.add(h);
+        return () => listeners.delete(h);
+      },
+      emit: (c: string, d: unknown) => {
+        if (c !== "pi-atelier:sidebar-panels") return;
         sent.push(d);
         for (const l of [...listeners]) l(d);
       },
@@ -22,7 +28,9 @@ function setup() {
   const ctx = (hasUI = true) => ({ hasUI, ui: { notify: vi.fn() } });
   return {
     sent, listeners, command, handlers,
-    start: () => handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {}),
+    start: () => handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {
+      sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/s1.jsonl" },
+    }),
     stop: () => handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, {}),
     ctx,
     registers: () => sent.filter((e) => e.type === "register"),
@@ -45,17 +53,17 @@ describe("extension lifecycle", () => {
   it("registers only the command and no tools/panel until session start", () => {
     const t = setup();
     expect(t.command.name).toBe("subagents-bar");
-    expect([...t.handlers.keys()].sort()).toEqual(["session_shutdown", "session_start"]);
+    expect([...t.handlers.keys()].sort()).toEqual(["session_shutdown", "session_start", "session_tree"]);
     expect(t.sent).toHaveLength(0);
   });
 
-  it("publishes one pending panel on start", () => {
+  it("publishes one connecting (never idle) panel on start", () => {
     const t = setup();
     t.start();
     expect(t.registers()).toHaveLength(1);
     const { panel } = t.registers()[0];
     expect(panel.id).toBe(PANEL_ID);
-    expect(panel.rows[0].text).toMatch(/integration pending/);
+    expect(panel.rows[0].text).toMatch(/Connecting to subagent provider/);
   });
 
   it("reload replaces the panel: old unregistered, revisions monotonic, one listener", () => {

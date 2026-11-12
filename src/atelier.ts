@@ -9,6 +9,12 @@ export const SIDEBAR_CHANNEL = "pi-atelier:sidebar-panels";
 export const PANEL_SOURCE = "subagents-bar";
 export const PANEL_ID = "subagents-bar:subagents";
 export const PANEL_TITLE = "Subagents";
+import { PENDING_SNAPSHOT } from "./types.ts";
+import type { EventTransport, MonitorSnapshot, RecordCategory, SnapshotRecord } from "./types.ts";
+
+export { PENDING_SNAPSHOT };
+export type { EventTransport, MonitorSnapshot, RecordCategory, SnapshotRecord };
+
 export const MAX_ROWS = 24;
 export const MAX_ROW_CHARS = 160;
 export const MAX_TITLE_CHARS = 48;
@@ -28,45 +34,6 @@ export interface SidebarPanel {
   title: string;
   rows: SidebarRow[];
 }
-
-export interface EventTransport {
-  on(channel: string, handler: (data: unknown) => void): () => void;
-  emit(channel: string, data: unknown): void;
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostic snapshot (renderer input). Later monitor increments produce this
-// shape; text fields are raw provider text and are sanitized here.
-// ---------------------------------------------------------------------------
-
-export type RecordCategory = "active" | "failed" | "neutral" | "success";
-
-export interface SnapshotRecord {
-  key: string;
-  category: RecordCategory;
-  /** Explicit status label, e.g. "running", "queued", "stopped". */
-  statusLabel?: string;
-  /** Task or label text. */
-  task?: string;
-  agent?: string;
-  model?: string;
-  /** Preformatted display values; absent means unknown, never zero-filled. */
-  duration?: string;
-  tokens?: string;
-}
-
-export interface MonitorSnapshot {
-  /** `pending`: monitor not integrated/connected yet; never rendered as idle. */
-  state: "pending" | "ready";
-  records: readonly SnapshotRecord[];
-  /** Provider-level aggregate counts, kept separate from known-record counts. */
-  fleet?: { active?: number; outside?: number };
-  /** Projection truncation / partial-coverage warnings (already worded by the monitor). */
-  diagnostics?: readonly string[];
-  historyLimited?: boolean;
-}
-
-export const PENDING_SNAPSHOT: MonitorSnapshot = { state: "pending", records: [] };
 
 // ---------------------------------------------------------------------------
 // Sanitization
@@ -125,6 +92,8 @@ const describe = (c: Counts): string =>
 function summaryRow(snapshot: MonitorSnapshot, counts: Counts): SidebarRow {
   if (snapshot.state === "pending") return row("Monitor integration pending", "caution");
   const text = describe(counts);
+  if (!text && snapshot.state === "connecting") return row("Connecting to subagent provider", "caution");
+  if (!text && snapshot.state === "unavailable") return row("Subagent provider unavailable", "caution");
   if (!text) return row("No known subagents", "muted");
   return row(`Known: ${text}`, counts.active > 0 ? "working" : counts.failed > 0 ? "error" : "primary");
 }
