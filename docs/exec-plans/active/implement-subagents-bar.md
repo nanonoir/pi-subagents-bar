@@ -25,6 +25,7 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - Neutral/non-success category sorts after failed and before successful, with explicit status labels; no cancellation/unknown is called completed.
 - Prefer summary-only collapse; never change Atelier layout/configuration.
 - No runtime extension dependencies, LLM tools, prompts, agent spawns, polling, credentials/network/filesystem scans in shipped code.
+- Adopt the accepted public-protocol design. Atelier has no visibility acknowledgement/width API; never inspect its config. Identity-rich records are rendered instead of opaque fleet rows; unjoinable fleet-only metadata is deliberately unavailable, with separate non-additive provider counts. Optional cost enrichment only at lifecycle boundaries over unique explicit IDs.
 
 ## Risks and acceptance evidence
 
@@ -40,8 +41,8 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 
 - [x] Read PRD, repository guide, testing/git-delivery/TypeScript skills; inspected baseline Git state.
 - [x] Specs writer registered PRD in product index.
-- [ ] Installed contracts and reference evidence complete.
-- [ ] Technical design recorded.
+- [x] Installed contracts and reference evidence complete: Pi 1.5.2, Atelier 0.18.0, pi-subagents 0.88.0; public v1 protocols, profile cycler 1.2.0/subscription panel 1.0.0 inspected read-only.
+- [x] Technical design recorded in docs/design-docs/subagents-bar.md. Identity-rich async/foreground mode avoids uncorrelatable fleet duplicates; fleet counts remain separate. API limitations are explicit.
 - [ ] Sidebar increment validated and committed.
 - [ ] Background monitor validated and committed.
 - [ ] Foreground/history validated and committed.

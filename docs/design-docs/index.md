@@ -1,3 +1,3 @@
 # Design decisions
 
-No durable design decisions are currently documented in this repository. Catalog significant decisions and their rationale here when they are established.
+- [Subagents bar: public-protocol observer](subagents-bar.md) — accepted design for the [approved PRD](../pi-subagents-bar.md): module boundaries, identity-rich source selection, conservative lifecycle/history reconciliation, session guards, event-driven RPC, Atelier publication and targeted validation.
