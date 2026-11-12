@@ -1,0 +1,27 @@
+{
+  "name": "pi-subagents-bar",
+  "version": "0.1.0",
+  "description": "Live subagent monitoring for Pi Atelier",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "private": true,
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.5.2",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
