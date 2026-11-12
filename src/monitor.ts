@@ -773,9 +773,10 @@ export function createMonitor(options: MonitorOptions): Monitor {
       statusToken = undefined;
       cancelStatus = undefined;
       if (!sameSession(session, currentSession())) { connect(); return; } // rebind, never apply
-      if (result.kind === "timeout") { fail("status timed out; showing last known state"); if (costAfterStatus) scheduleCost(); return; }
-      if (result.kind === "error") { fail(`status failed (${result.code}); showing last known state`); if (costAfterStatus) scheduleCost(); return; }
-      applyStatus(result.data);
+      if (result.kind === "timeout") fail("status timed out; showing last known state");
+      else if (result.kind === "error") fail(`status failed (${result.code}); showing last known state`);
+      else applyStatus(result.data);
+      if (gen !== generation || disposed) return;
       if (costAfterStatus) scheduleCost();
       if (dirty) { dirty = false; scheduleStatus(); }
     });
@@ -785,7 +786,6 @@ export function createMonitor(options: MonitorOptions): Monitor {
   /** Keep last safe records; mark the provider problem. No automatic retry. */
   const fail = (reason: string): void => {
     problem = reason;
-    dirty = false;
     changed();
   };
 

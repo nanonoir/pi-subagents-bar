@@ -233,6 +233,55 @@ describe("coalescing, in-flight and dirty follow-up", () => {
     m.dispose();
   });
 
+  it.each(["error", "timeout", "malformed", "unusable"])("pending invalidation survives %s status and triggers only one follow-up", (failure) => {
+    const p = provider({ ping: () => pingData(), manual: true });
+    const { m } = setup(p);
+    m.start();
+    p.replies.get(p.requests("status")[0].requestId)!(statusData([node("safe", "running")]));
+    p.bus.emit(JOBS_CHANGED_EVENT, {});
+    vi.advanceTimersByTime(COALESCE_MS);
+    const request = p.requests("status")[1];
+    p.bus.emit(JOBS_CHANGED_EVENT, {});
+    p.bus.emit(JOBS_CHANGED_EVENT, {});
+    expect(p.requests("status")).toHaveLength(2);
+    if (failure === "timeout") vi.advanceTimersByTime(STATUS_TIMEOUT_MS);
+    else if (failure === "error") p.bus.emit(RPC_REPLY_PREFIX + request.requestId, {
+      version: 1, requestId: request.requestId, method: "status", success: false,
+      error: { code: "failed", message: "failure" },
+    });
+    else p.replies.get(request.requestId)!(failure === "malformed" ? null : {});
+    expect(m.snapshot().records[0]).toMatchObject({ task: "label safe", category: "active" });
+    expect(m.snapshot().diagnostics?.[0]).toMatch(/showing last known state/);
+    vi.advanceTimersByTime(COALESCE_MS - 1);
+    expect(p.requests("status")).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(p.requests("status")).toHaveLength(3);
+    const followUp = p.requests("status")[2];
+    p.bus.emit(RPC_REPLY_PREFIX + followUp.requestId, {
+      version: 1, requestId: followUp.requestId, method: "status", success: false,
+      error: { code: "failed", message: "failure" },
+    });
+    vi.advanceTimersByTime(60_000);
+    expect(p.requests("status")).toHaveLength(3);
+    m.dispose();
+  });
+
+  it.each(["dispose", "reset"])("%s cancels a dirty follow-up after failure", (action) => {
+    const p = provider({ ping: () => pingData(), manual: true });
+    const { m } = setup(p);
+    m.start();
+    const request = p.requests("status")[0];
+    p.bus.emit(JOBS_CHANGED_EVENT, {});
+    p.replies.get(request.requestId)!(null);
+    if (action === "dispose") m.dispose();
+    else m.resetBranch();
+    const count = p.requests("status").length;
+    expect(count).toBe(action === "dispose" ? 1 : 2);
+    vi.advanceTimersByTime(COALESCE_MS);
+    expect(p.requests("status")).toHaveLength(count);
+    m.dispose();
+  });
+
   it("status timeout keeps last safe records, flags problem, no retry loop", () => {
     const p = provider({ ping: () => pingData(), status: () => statusData([node("a", "running")]) });
     const { m } = setup(p);
