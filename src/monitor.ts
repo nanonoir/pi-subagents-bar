@@ -9,7 +9,7 @@
  * aggregate counts are kept separate and non-additive.
  *
  * Foreground tool results and current-branch history use indexed identities.
- * Structured notices and elapsed display updates are session-scoped; cost enrichment is deferred.
+ * Structured notices, elapsed display updates and optional cost enrichment are session-scoped.
  */
 import type { EventTransport, MonitorSnapshot, RecordCategory, SnapshotRecord } from "./types.ts";
 
@@ -21,6 +21,7 @@ export const JOBS_CHANGED_EVENT = "subagent:jobs-changed";
 export const COALESCE_MS = 250;
 export const PING_TIMEOUT_MS = 2_000;
 export const STATUS_TIMEOUT_MS = 5_000;
+export const COST_TIMEOUT_MS = 5_000;
 export const MAX_NON_ACTIVE = 100;
 const MAX_RUNS = 100;
 const MAX_CHILDREN = 64;
@@ -55,6 +56,7 @@ export interface Monitor {
   resetBranch(): void;
   observeTool(toolCallId: unknown, result: unknown, final: boolean): void;
   observeMessage(message: unknown): void;
+  agentSettled(): void;
   dispose(): void;
 }
 
@@ -87,6 +89,7 @@ const sameFile = (a: string | null | undefined, b: string | null | undefined): b
 interface ProviderInfo {
   fleet: boolean;
   snapshot: boolean;
+  cost: boolean;
   events: { name: string; ready: boolean }[];
 }
 
@@ -126,6 +129,7 @@ function validatePing(data: unknown, session: MonitorSession | undefined): PingR
     info: {
       fleet: isRec(fleet) && fleet.version === 1,
       snapshot: isRec(snap) && snap.kind === SNAPSHOT_KIND && snap.version === 1,
+      cost: data.methods.includes("cost") && isRec(caps.cost) && caps.cost.version === 1,
       events,
     },
   };
@@ -167,6 +171,7 @@ interface Tracked {
   durationMs?: number;
   observedAt?: number;
   childId?: string;
+  singleParent?: boolean;
   workflowKey?: string;
   noticeSource?: string;
   tokens?: string;
@@ -367,11 +372,12 @@ export function createMonitor(options: MonitorOptions): Monitor {
   let link: Link = "idle";
   let problem: string | undefined;
   let loaded = false;
-  let info: ProviderInfo = { fleet: false, snapshot: false, events: [] };
+  let info: ProviderInfo = { fleet: false, snapshot: false, cost: false, events: [] };
 
   let tracked = new Map<string, Tracked>();
   let foreground = new Map<string, Tracked>();
   let notices = new Map<string, Tracked>();
+  const costUsage = new Map<string, { id: string; tokens: string }>();
   let callParents = new Map<string, string>();
   let retiredCalls = new Set<string>();
   let foregroundNotes: string[] = [];
@@ -384,6 +390,11 @@ export function createMonitor(options: MonitorOptions): Monitor {
   let dirty = false;
   let coalesceTimer: ReturnType<typeof setTimeout> | undefined;
   let elapsedTimer: ReturnType<typeof setTimeout> | undefined;
+  let costTimer: ReturnType<typeof setTimeout> | undefined;
+  let costToken: object | undefined;
+  let costDirty = false;
+  let costDue = false;
+  let cancelCost: (() => void) | undefined;
   let pingToken: object | undefined;
   let statusToken: object | undefined;
   let cancelPing: (() => void) | undefined;
@@ -412,10 +423,16 @@ export function createMonitor(options: MonitorOptions): Monitor {
     dirty = false;
     pingToken = undefined;
     statusToken = undefined;
-    const p = cancelPing, s = cancelStatus;
-    cancelPing = cancelStatus = undefined;
+    if (costToken || costTimer !== undefined || costDirty) costDue = true;
+    costToken = undefined;
+    costDirty = false;
+    if (costTimer !== undefined) clearTimeout(costTimer);
+    costTimer = undefined;
+    const p = cancelPing, s = cancelStatus, c = cancelCost;
+    cancelPing = cancelStatus = cancelCost = undefined;
     p?.();
     s?.();
+    c?.();
   };
 
   const selected = (): Tracked[] => {
@@ -449,6 +466,86 @@ export function createMonitor(options: MonitorOptions): Monitor {
       return n.status === "unknown" ? f : { ...f, status: n.status, ...(n.sortTime !== undefined ? { sortTime: n.sortTime } : {}) };
     });
     return asyncRows.filter((t) => !aggregateParents.has(t.parentId)).concat(mergedNotices, mergedForeground);
+  };
+
+  /** Candidate IDs must identify one selected execution, not an array position or projection node. */
+  const costIds = (rows: Tracked[]): Map<string, string> => {
+    const candidates = new Map<string, string>();
+    for (const row of rows) {
+      const siblings = rows.filter((r) => r.parentId && r.parentId === row.parentId).length;
+      let id = row.childId;
+      if (!id && row.parentId && siblings === 1) {
+        if ((row.key.startsWith("foreground:") && row.singleParent) ||
+            (row.key.startsWith("async:") && row.path.length === 1) ||
+            (row.key.startsWith("notice:") && !row.workflowKey)) id = row.parentId;
+      }
+      if (id && id !== "unavailable") candidates.set(row.key, id);
+    }
+    const counts = new Map<string, number>();
+    for (const id of candidates.values()) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const [key, id] of candidates) if (counts.get(id) !== 1) candidates.delete(key);
+    return candidates;
+  };
+  const needsCost = (): boolean => {
+    const rows = selected();
+    const ids = costIds(rows);
+    return rows.some((r) => FINAL.has(r.status) && !r.tokens && ids.has(r.key) &&
+      costUsage.get(r.key)?.id !== ids.get(r.key));
+  };
+  const applyCost = (data: unknown): void => {
+    if (!isRec(data) || data.version !== 1 || !Array.isArray(data.children) || data.children.length > 1000) return;
+    const byId = new Map<string, { count: number; tokens?: string }>();
+    for (const item of data.children) {
+      if (!isRec(item)) continue;
+      const id = safeId(item.runId);
+      if (!id || id === "unavailable") continue;
+      const prior = byId.get(id);
+      if (prior) { prior.count++; continue; }
+      const usage = isRec(item.usage) ? item.usage : {};
+      const input = nonNegInt(usage.input), output = nonNegInt(usage.output);
+      const sum = input !== undefined && output !== undefined ? nonNegInt(input + output) : undefined;
+      const tokens = sum !== undefined ? `${sum} tok` : input !== undefined && output === undefined ? `${input} in` : output !== undefined && input === undefined ? `${output} out` : undefined;
+      byId.set(id, { count: 1, ...(tokens !== undefined ? { tokens } : {}) });
+    }
+    const rows = selected();
+    const ids = costIds(rows);
+    let updated = false;
+    for (const row of rows) {
+      const id = ids.get(row.key);
+      const cost = id ? byId.get(id) : undefined;
+      if (!id || !FINAL.has(row.status) || row.tokens || cost?.count !== 1 || cost.tokens === undefined) {
+        if (costUsage.delete(row.key)) updated = true;
+        continue;
+      }
+      const prev = costUsage.get(row.key);
+      if (prev?.id !== id || prev.tokens !== cost.tokens) { costUsage.set(row.key, { id, tokens: cost.tokens }); updated = true; }
+    }
+    if (updated) changed();
+  };
+  const scheduleCost = (): boolean => {
+    if (!costDue || disposed || rebuilding || link !== "bound" || !info.cost || !sameSession(boundSession, currentSession())) return false;
+    if (!needsCost()) { costDue = false; return false; }
+    costDue = false;
+    if (costToken) { costDirty = true; return true; }
+    if (costTimer !== undefined) return true;
+    costTimer = setTimeout(() => {
+      costTimer = undefined;
+      if (disposed || link !== "bound" || !info.cost || !sameSession(boundSession, currentSession()) || !needsCost()) return;
+      const session = currentSession(), gen = generation, token = {};
+      costToken = token;
+      costDirty = false;
+      const cancel = rpcRequest(events, uuid(), "cost", {}, COST_TIMEOUT_MS, (result) => {
+        if (disposed || costToken !== token || generation !== gen) return;
+        costToken = undefined;
+        cancelCost = undefined;
+        if (!sameSession(session, currentSession()) || !sameSession(boundSession, currentSession())) return;
+        if (result.kind === "ok") applyCost(result.data);
+        if (costDirty) { costDirty = false; costDue = true; scheduleCost(); }
+      });
+      if (costToken === token) cancelCost = cancel;
+    }, COALESCE_MS);
+    (costTimer as { unref?: () => void }).unref?.();
+    return true;
   };
 
   const elapsed = (t: Tracked, time: number): number | undefined => {
@@ -541,6 +638,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       foreground.set(key, {
         ...prev, key, path: [call, String(index)], status, stale: false, authority,
         ...(scope ? { parentId: scope } : {}),
+        ...(typeof details?.mode === "string" ? { singleParent: details.mode === "single" && rows.length === 1 && indexes.get(index) === 1 } : {}),
         ...(task ? { task } : {}),
         ...(agent ? { agent } : {}),
         ...(model ? { model } : {}),
@@ -563,6 +661,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
     }
     prune();
     changed();
+    if (final && !rebuilding) { costDue = true; scheduleCost(); }
   };
 
   const observeNotice = (details: unknown, sortTime?: number): void => {
@@ -619,6 +718,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
     if (partial) foregroundNotes = ["notice representation may have partial coverage"];
     prune();
     changed();
+    if (!rebuilding) { costDue = true; scheduleCost(); }
   };
 
   const timestamp = (value: unknown): number | undefined => {
@@ -660,7 +760,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
     (coalesceTimer as { unref?: () => void }).unref?.();
   };
 
-  const loadStatus = (): void => {
+  const loadStatus = (costAfterStatus = false): void => {
     if (disposed || link !== "bound" || statusToken) return;
     const session = currentSession();
     if (!session) { fail("session identity unavailable"); return; }
@@ -673,9 +773,10 @@ export function createMonitor(options: MonitorOptions): Monitor {
       statusToken = undefined;
       cancelStatus = undefined;
       if (!sameSession(session, currentSession())) { connect(); return; } // rebind, never apply
-      if (result.kind === "timeout") { fail("status timed out; showing last known state"); return; }
-      if (result.kind === "error") { fail(`status failed (${result.code}); showing last known state`); return; }
+      if (result.kind === "timeout") { fail("status timed out; showing last known state"); if (costAfterStatus) scheduleCost(); return; }
+      if (result.kind === "error") { fail(`status failed (${result.code}); showing last known state`); if (costAfterStatus) scheduleCost(); return; }
       applyStatus(result.data);
+      if (costAfterStatus) scheduleCost();
       if (dirty) { dirty = false; scheduleStatus(); }
     });
     if (statusToken === token) cancelStatus = cancel;
@@ -761,6 +862,8 @@ export function createMonitor(options: MonitorOptions): Monitor {
       for (const t of inactive.slice(MAX_NON_ACTIVE)) { tracked.delete(t.key); foreground.delete(t.key); notices.delete(t.key); }
       historyLimited = true;
     }
+    const keys = new Set([...tracked.keys(), ...foreground.keys(), ...notices.keys()]);
+    for (const key of costUsage.keys()) if (!keys.has(key)) costUsage.delete(key);
     const retainedCalls = new Set([...foreground.values()].map((t) => t.path[0]));
     for (const call of callParents.keys()) if (!retainedCalls.has(call)) callParents.delete(call);
   };
@@ -829,7 +932,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
     link = "bound";
     problem = undefined;
     subscribeAdvertised();
-    loadStatus();
+    loadStatus(true);
   };
 
   // -- public --------------------------------------------------------------
@@ -840,6 +943,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       started = true;
       boundSession = currentSession();
       rebuildBranch();
+      costDue = true;
       scheduleElapsed();
       // Known names first, so nothing is missed between ping and status.
       subs.set(RPC_READY_EVENT, listen(RPC_READY_EVENT, true));
@@ -859,10 +963,13 @@ export function createMonitor(options: MonitorOptions): Monitor {
         };
       }
       const list = selected().sort(byRecency);
+      const ids = costIds(list);
       let stale = 0;
       const records: SnapshotRecord[] = list.map((t) => {
         if (t.stale) stale += 1;
         const duration = formatDuration(undefined, undefined, elapsed(t, now()));
+        const usage = costUsage.get(t.key);
+        const tokens = t.tokens ?? (FINAL.has(t.status) && usage?.id === ids.get(t.key) ? usage?.tokens : undefined);
         return {
           key: t.key,
           category: CATEGORY[t.status],
@@ -871,7 +978,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
           ...(t.agent ? { agent: t.agent } : {}),
           ...(t.model ? { model: t.model } : {}),
           ...(duration ? { duration } : {}),
-          ...(t.tokens ? { tokens: t.tokens } : {}),
+          ...(tokens ? { tokens } : {}),
         };
       });
       const diagnostics = [
@@ -900,15 +1007,17 @@ export function createMonitor(options: MonitorOptions): Monitor {
       cancelInflight();
       clearElapsed();
       retiredCalls = new Set([...callParents.keys(), ...[...foreground.values()].map((t) => t.path[0]!).filter(Boolean)]);
-      tracked.clear(); foreground.clear(); notices.clear(); callParents.clear(); fleet = undefined; notes = []; foregroundNotes = []; historyLimited = false; loaded = false; problem = undefined;
+      tracked.clear(); foreground.clear(); notices.clear(); callParents.clear(); costUsage.clear(); fleet = undefined; notes = []; foregroundNotes = []; historyLimited = false; loaded = false; problem = undefined;
       boundSession = currentSession();
       rebuildBranch();
+      costDue = true;
       changed();
       connect();
     },
 
     observeTool,
     observeMessage,
+    agentSettled(): void { costDue = true; scheduleCost(); },
 
     dispose(): void {
       if (disposed) return;
@@ -918,7 +1027,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
       for (const unsub of subs.values()) unsub();
       subs.clear();
       tracked = new Map();
-      foreground.clear(); notices.clear(); callParents.clear(); retiredCalls.clear();
+      foreground.clear(); notices.clear(); callParents.clear(); retiredCalls.clear(); costUsage.clear();
     },
   };
 }

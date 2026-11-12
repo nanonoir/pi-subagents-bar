@@ -47,7 +47,7 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Background monitor validated and committed: public ping/status + events, rich async snapshots, separate fleet counts, coalescing/timeouts/session guards, conservative stale/terminal state and 100-entry nonactive retention. No accumulated active cap.
 - [x] Core foreground/tool-result history validated and committed: explicit indexed identity, promotion, child metrics, async representation suppression, current branch rebuild and RPC-independent coverage (66 focused tests).
 - [x] Structured notices, cross-source completion reconciliation and elapsed-only refresh complete (74 focused tests passed).
-- [ ] Optional exact-ID terminal cost enrichment complete.
+- [x] Optional exact-ID terminal cost enrichment complete (81 focused tests passed including 7 cost tests).
 - [ ] Independent review and corrections complete.
 - [ ] Compatibility smoke, docs reconciliation and plan closure complete.
 
@@ -73,6 +73,8 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 2026-11-12: Notice/elapsed increment 2499547b-c3f4-494c-870f-003e34b155a8 completed. Parent diagnosed repeated edit failures as ambiguous/stale exact replacement batches and steered smaller edits; source and tests preserved. A failing root-to-children duplicate regression was fixed rather than weakened. Parent independently ran strict typecheck, five focused Vitest files (74 tests passed), and diff --check. Provider-first real protocol smoke also passed 25/25 on b8eb1a5; final smoke remains.
 
+2026-11-12: Cost increment fd91fcf6-5977-412c-8ec3-f18653c7eb2d completed. Public cost capability is negotiated; usage joins unique exact IDs at lifecycle boundaries, never timer/stream polling or ambiguous parent distribution. Parent inspected the cost scheduling/join seam and independently ran strict typecheck, six focused Vitest files (81 tests passed), and diff --check.
+
 ## Outcome
 
-In progress; core monitor, foreground/history/notices and display-only elapsed refresh complete. User-authorized implementer route remains openai/gpt-6.1-terra:high. Optional cost metrics, final smoke, README and independent review remain.
+In progress; functional implementation complete pending independent review/corrections. User-authorized implementer route remains openai/gpt-6.1-terra:high. Final smoke, README/package metadata and documentation reconciliation remain. Interactive TUI acceptance is reserved for the user's manual check, not claimed by headless automation.

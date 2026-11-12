@@ -66,6 +66,7 @@ export default function subagentsBar(pi: ExtensionAPI): void {
     if (sameContext(ctx) && event.toolName === "subagent") monitor?.observeTool(event.toolCallId, event.result, true);
   });
   pi.on("message_end", (event, ctx) => { if (sameContext(ctx)) monitor?.observeMessage(event.message); });
+  pi.on("agent_settled", (_event, ctx) => { if (sameContext(ctx)) monitor?.agentSettled(); });
   pi.on("session_shutdown", dispose);
 
   pi.registerCommand(COMMAND_NAME, {

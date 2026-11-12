@@ -53,7 +53,7 @@ describe("extension lifecycle", () => {
   it("registers only the command and no tools/panel until session start", () => {
     const t = setup();
     expect(t.command.name).toBe("subagents-bar");
-    expect([...t.handlers.keys()].sort()).toEqual(["message_end", "session_shutdown", "session_start", "session_tree", "tool_execution_end", "tool_execution_update"]);
+    expect([...t.handlers.keys()].sort()).toEqual(["agent_settled", "message_end", "session_shutdown", "session_start", "session_tree", "tool_execution_end", "tool_execution_update"]);
     expect(t.sent).toHaveLength(0);
   });
 
