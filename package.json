@@ -4,7 +4,9 @@
   "description": "Live subagent monitoring for Pi Atelier",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:sidebar": "vitest run tests/atelier.test.ts tests/index.test.ts"
   },
   "keywords": [
     "pi-package"

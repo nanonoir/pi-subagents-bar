@@ -43,7 +43,7 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Specs writer registered PRD in product index.
 - [x] Installed contracts and reference evidence complete: Pi 1.5.2, Atelier 0.18.0, pi-subagents 0.88.0; public v1 protocols, profile cycler 1.2.0/subscription panel 1.0.0 inspected read-only.
 - [x] Technical design recorded in docs/design-docs/subagents-bar.md. Identity-rich async/foreground mode avoids uncorrelatable fleet duplicates; fleet counts remain separate. API limitations are explicit.
-- [ ] Sidebar increment validated and committed.
+- [x] Sidebar increment validated and committed: public v1 publisher, safe rows/overflow, summary commands; 28 focused tests and strict typecheck passed.
 - [ ] Background monitor validated and committed.
 - [ ] Foreground/history validated and committed.
 - [ ] Independent review and corrections complete.
@@ -55,6 +55,8 @@ Not yet implemented. No tests run at baseline (npm test is a placeholder).
 
 2026-11-12: first implementer run `fbed6326-8979-448b-a779-fc747f8ec114` failed upstream with HTTP 429 (Claude account rate limit). Inspected retained run and confirmed a clean worktree with empty src/tests. One bounded same-route recovery (`6a6b1f07-7772-4929-94b4-c93297a6b1b2`, claude-code/claude-sonnet-5-5, medium) failed identically; terminal failure verified. No partial implementation or test evidence exists. Stop retries; retain diagnostics in native run artifacts. Await explicit authorization for an alternative model route or provider recovery; do not silently fall back. Independent read-only smoke-feasibility explorer remains active (`45a28958-4fe8-443d-973f-d1cb902d72f8`).
 
+2026-11-12: User explicitly reported Claude quota reset and authorized same-model recovery. Run `e89beacf-d494-40b2-b78a-97f941a776d2` completed the sidebar increment. Parent independently ran `npm run typecheck` and `npm run test:sidebar`: 28 tests passed. `git diff --check` passed. No provider/interactive smoke claimed. The initial panel honestly reports monitor integration pending. Smoke feasibility explorer completed; its recipe is advisory and must be checked against actual exported APIs before use.
+
 ## Outcome
 
-Blocked before implementation by repeated upstream Claude account rate limiting. Exploration/spec registration/design are complete; all functional increments, tests, installed-provider smoke, README and final review remain pending.
+In progress; provider blocker cleared by user-confirmed quota reset. Sidebar seam complete; background monitor, foreground/history, installed-provider smoke, README and review remain.
