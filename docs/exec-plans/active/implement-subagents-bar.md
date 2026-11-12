@@ -75,6 +75,10 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 2026-11-12: Cost increment fd91fcf6-5977-412c-8ec3-f18653c7eb2d completed. Public cost capability is negotiated; usage joins unique exact IDs at lifecycle boundaries, never timer/stream polling or ambiguous parent distribution. Parent inspected the cost scheduling/join seam and independently ran strict typecheck, six focused Vitest files (81 tests passed), and diff --check.
 
+2026-11-12: Parent ran final installed-provider smoke on HEAD1c46073 with real Pi1.5.2/subagents0.88.0/Atelier0.18.0 registry, plus cycler1.2.0/subscription-panel1.0.0 registration checks: 25/25 provider-first and 25/25 bar-first, no network attempts/runner errors/command collisions. Script explicitly excludes Atelier UI rendering and subscription lifecycle. Failed Claude scratch draft moved from /tmp/new_mid.ts into its retained failed-run diagnostic directory.
+
+2026-11-12: Docs/package worker1667f72c-bdbd-4c3d-be81-9363f739db52 completed README, ISC license, user manual smoke checklist and source package metadata. Offline lockfile update affected root metadata only (no dependency upgrades). Worker ran typecheck, 29 focused renderer/command tests and npm pack --dry-run --json (16 files, no bundled dependencies). Parent inspected README/manual/package/lock diff. Independent reviewer b21c0612-3f47-4a42-aad0-a75c76c9607e reviews immutable6ab34f4 plus stable final cost/doc source with direct read tools only; no failed-tool review is treated as approval.
+
 ## Outcome
 
-In progress; functional implementation complete pending independent review/corrections. User-authorized implementer route remains openai/gpt-6.1-terra:high. Final smoke, README/package metadata and documentation reconciliation remain. Interactive TUI acceptance is reserved for the user's manual check, not claimed by headless automation.
+In progress; implementation, README/package metadata and headless protocol smoke complete, pending independent review/corrections and documentation reconciliation. User-authorized implementer route remains openai/gpt-6.1-terra:high. Interactive TUI acceptance is reserved for the user's manual check, not claimed by headless automation.

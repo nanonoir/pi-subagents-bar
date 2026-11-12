@@ -2,12 +2,17 @@
   "name": "pi-subagents-bar",
   "version": "0.1.0",
   "description": "Live subagent monitoring for Pi Atelier",
-  "main": "index.js",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:monitor": "vitest run tests/monitor.test.ts",
-    "test:sidebar": "vitest run tests/atelier.test.ts tests/index.test.ts"
+    "test:foreground": "vitest run tests/foreground.test.ts",
+    "test:notices": "vitest run tests/notices.test.ts",
+    "test:cost": "vitest run tests/cost.test.ts",
+    "test:index": "vitest run tests/index.test.ts",
+    "test:renderer": "vitest run tests/atelier.test.ts",
+    "test:sidebar": "vitest run tests/atelier.test.ts tests/index.test.ts",
+    "test:providers": "node scripts/provider-smoke.mjs"
   },
   "keywords": [
     "pi-package"
@@ -26,5 +31,18 @@
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
+  },
+  "files": [
+    "src/",
+    "tests/",
+    "scripts/",
+    "docs/manual-smoke.md",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   }
 }
