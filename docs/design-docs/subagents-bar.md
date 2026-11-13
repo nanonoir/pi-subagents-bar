@@ -1,6 +1,6 @@
 # Subagents bar: public-protocol observer
 
-Status: accepted implementation design. Product authority: [PRD](../pi-subagents-bar.md). Execution record: [implementation plan](../exec-plans/active/implement-subagents-bar.md). This document records technical choices, not additional product scope.
+Status: accepted implementation design. Product authority: [PRD](../pi-subagents-bar.md). Execution record: [implementation plan](../exec-plans/completed/implement-subagents-bar.md). This document records technical choices, not additional product scope.
 
 ## Boundaries and implementation seams
 

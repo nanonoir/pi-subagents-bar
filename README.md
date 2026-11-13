@@ -1,78 +1,133 @@
 # pi-subagents-bar
 
-A read-only Pi extension that contributes a **Subagents** panel to the existing Pi Atelier sidebar. It observes foreground and background executions from **[nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents)**, not other similarly named providers. It does not start or control jobs, add LLM tools or prompts, collect credentials or telemetry, write configuration, spawn processes, or poll for status. Updates use public events and RPC; an active-only timer can refresh displayed elapsed time without RPC polling.
+**Live subagent monitoring inside the Pi Atelier sidebar.**
 
-## Requirements and local trial
+`pi-subagents-bar` adds a compact **Subagents** panel to [Pi Atelier](https://github.com/michaelmjhhhh/pi-atelier). It shows what your [`nicobailon/pi-subagents`](https://github.com/nicobailon/pi-subagents) children are doing: task, agent, model, duration and tokens. Active work is listed first.
 
-Use Node.js 22.19.0 or later, Pi, Atelier, and nicobailon/pi-subagents. The inspected and headless-tested baseline is Pi 1.5.2, Atelier 0.18.0 and pi-subagents 0.88.0; other versions are not guaranteed. Pi supplies the host SDK; the package has no runtime dependency on the other extensions.
+```text
+▼ Subagents
+● 1 run · ✓ 2 done · ✕ 1 err
+[●] Implement sidebar rows (implementer) · sonnet
+  ↳ ⏱ 01:42 · 18,200 tok
+[✕] Run provider smoke (reviewer) · gpt-6.1-terra
+  ↳ ⏱ 00:37 · 4,120 tok
+[✓] Review PR33 and PR34 (reviewer) · gpt-6.1-terra
+  ↳ ⏱ 06:20 · 79,937 tok
+```
 
-From this checkout, with Atelier and pi-subagents already available to Pi, start a temporary trial:
+The example is approximate; Atelier controls the frame, width and colors.
+
+## Highlights
+
+- **Foreground and background runs** in one place, including completed children restored from the current session branch.
+- **Clear priority:** active → failed → other → done.
+- **Honest data:** no guessed matches and no invented values. Missing fields are omitted, and rows are merged only when identities match exactly.
+- **Lightweight:** event-driven updates and no status polling. A local timer only refreshes elapsed time while something is running.
+- **Read-only and safe:** no LLM tools, prompts, telemetry, credentials, configuration writes or spawned processes.
+
+## Requirements
+
+| Component | Tested version |
+| --- | --- |
+| Node.js | 22.19.0 or later |
+| [Pi](https://pi.dev) | 1.5.2 |
+| [Pi Atelier](https://github.com/michaelmjhhhh/pi-atelier) | 0.18.0 |
+| [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | 0.88.0 |
+
+Other versions may work but are not guaranteed. The extension has no runtime dependencies; Pi supplies the host SDK.
+
+## Install
+
+```sh
+pi install git:github.com/nanonoir/pi-subagents-bar
+```
+
+Or try it once without installing, from a local checkout:
 
 ```sh
 pi -e ./src/index.ts
 ```
 
-Alternatively, persistently install the local package with `pi install ./path/to/pi-subagents-bar`. Use one loading method at a time: do not also pass `-e` when the package is already loaded. The manifest's `pi.extensions` points to `./src/index.ts`.
+Use only one loading method. Do not combine `-e` with an installed copy.
 
-**First run:** Atelier starts newly contributed panels hidden. Open `/atelier display` (or Atelier Settings → Display) and enable **Subagents**. The extension cannot detect or change Atelier's enabled layout.
+### Enable the panel
 
-This package is private and **not published to npm**. After a separate future publication, the standard Pi syntax would be `pi install npm:pi-subagents-bar`; it is not currently available from npm.
+Atelier starts newly contributed panels hidden:
+
+1. Run `/atelier display`.
+2. Enable the **Subagents** panel contributed by this extension (`subagents-bar:subagents`).
+
+> Atelier also has a built-in panel named **Subagents** that shows a cost chart. If you see `Cost per agent` curves, you are looking at Atelier's built-in panel, not this one.
 
 ## Commands
 
-| Command | Effect on this extension's content |
+| Command | Effect |
 | --- | --- |
-| `/subagents-bar show` | Expand the detailed list. |
-| `/subagents-bar hide` | Collapse to summary and diagnostics only. |
-| `/subagents-bar toggle` or `/subagents-bar` | Toggle between expanded and summary-only. |
+| `/subagents-bar show` | Show the detailed list. |
+| `/subagents-bar hide` | Show only the summary and notices. |
+| `/subagents-bar` or `/subagents-bar toggle` | Switch between the two. |
 
-`show` and `hide` are idempotent; the preference is held in memory within the extension factory closure (persisting across session switches in the same running instance, but resetting to expanded on a fresh extension reload). None of these commands enables or disables Atelier's panel. If it is not visible, use `/atelier display`.
+These commands change only this panel's content; they do not enable or disable it in Atelier. The choice persists across session switches and resets on reload.
 
 ## Reading the panel
 
-The summary shows known retained records as `● N run · ✓ N done · ✕ N err` (plus `· ~ N other` only when neutral records exist). Each execution uses up to two rows:
+| Marker | Meaning |
+| --- | --- |
+| `[●]` | Running or queued |
+| `[✕]` | Failed |
+| `[~]` | Stopped, paused, cancelled, interrupted or unknown |
+| `[✓]` | Completed |
 
-```
-[✓] Review PR33 and PR34 final (reviewer) · GPT-6.1 Terra
-  ↳ ⏱ 06:20 · 79,937 tok
-```
+- The **title** is the task, or the agent when no task is known.
+- The **model** omits its provider prefix and thinking-level suffix.
+- The **second row** shows duration and tokens. Words appear only when useful, such as `stale` or `timed out`.
+- With many running jobs, each execution collapses to one row. The panel stays within Atelier's 24-row limit and summarizes any overflow.
+- **`Partial data`** appears only when the provider could not supply complete records.
 
-Markers are `[●]` active, `[✕]` failed, `[~]` neutral and `[✓]` success. With no task the agent is the title; the model is shortened by dropping a provider prefix and thinking suffix. The second row shows duration and tokens, plus a status word only when it adds information (`stale`, `stopped`, `timed out`…); with many active records it collapses to one row joined by ` · `. Missing values are omitted, never zero-filled. The panel uses BMP symbols and does not read Atelier's Nerd Font/plain-text setting, because that setting is not part of the public sidebar protocol. A `Partial data` notice appears only when coverage is really incomplete.
+## Limitations
 
-Known active executions appear first, then failures, neutral states, and successes. Stopped, cancelled, paused, interrupted and unknown states are not successes. Task/label, role, model, duration and token usage appear only when structured source data supplies them. Text is sanitized and bounded; Atelier clips it to the actual sidebar width. Rows are not interactive.
-
-Counts describe known retained records, not an exact all-session total. Provider fleet counts are separate and must not be added to those counts. There are at most 24 displayed rows, with overflow indicated; active records are not discarded to make room for history. Up to 100 non-active records are retained in memory, with a `history limited` indication when evicted. History is reconstructed from available current-session branch records and provider data; switching sessions or branches rebuilds the view, not a global history.
-
-Fleet keys are opaque and cannot safely be joined to execution identities: fleet-only activity is summarized, not rendered as guessed jobs. Bounded or malformed projections can leave partial coverage; absent entries do not prove a job finished. Last-known active data may remain stale until explicit terminal evidence. Async snapshots do not supply tokens or full task details. Optional terminal cost enrichment uses only unique exact child IDs; ambiguous cost rows remain unassigned. Foreground completion notices without child indices can leave detached multi-child executions unresolved. Late events for previously unseen tool executions after branch navigation cannot be correlated to the active branch using untagged events alone.
+- **Snapshot counts:** counts cover records currently held by the panel, not an exact total for the whole session. It keeps up to 100 finished records; active ones are never dropped.
+- **Ambiguous data:** provider fleet entries without a run identity are summarized, not shown as rows. Usage that cannot be linked to an exact child is left out.
+- **Unconfirmed endings:** a job that disappears from a status update keeps its last known state, marked `stale`, until the provider confirms it ended.
+- **Branch switches:** a few late events for tool calls first seen after switching branches cannot be linked reliably to a branch.
+- **Fixed symbols:** the panel always uses standard Unicode symbols because Atelier does not share its Nerd Font or plain-text setting with extensions.
 
 ## Troubleshooting
 
-- **No panel:** confirm Atelier and this extension are loaded once, then enable Subagents in `/atelier display`. The public protocol cannot confirm panel visibility.
-- **Provider unavailable or partial:** check that the installed provider is `nicobailon/pi-subagents` and supports the public RPC capabilities. Foreground and background coverage depends on available structured records.
-- **Stale data:** a timeout preserves the last safe state rather than inventing completion. A later provider event or a `/subagents-bar` command can trigger a refresh; verify the current session too.
-- **Missing tokens or fields:** the provider may not supply them, or identities may not allow a safe cost join. Missing values are not estimated.
-- **Unexpected duplicates or old records:** check for double-loading and the current session/branch; `/reload` rebuilds the view. Unjoinable records are not merged by role or appearance. Report a reproducible case without sharing sensitive session data.
+| Problem | What to check |
+| --- | --- |
+| No panel | Confirm the extension is loaded once, then enable it in `/atelier display`. |
+| Cost chart instead of task rows | That is Atelier's built-in panel; enable `subagents-bar:subagents`. |
+| `Subagent provider unavailable` | Install `nicobailon/pi-subagents`, not a similarly named package. |
+| Missing tokens or model | The provider did not report them for that run. |
+| Duplicates or old rows | Check for double loading; `/reload` rebuilds the view. |
 
-## Development and verification
-
-Install development dependencies locally with `npm ci`, then run `npm run typecheck`. Focused checks are available as `npm run test:monitor`, `test:foreground`, `test:notices`, `test:cost`, `test:index`, `test:renderer` and `test:sidebar` (use `npm run` for each).
-
-The optional no-model provider smoke uses local installed package paths, for example:
+## Development
 
 ```sh
-npm run test:providers -- --sdk=/path/to/pi-coding-agent --atelier=/path/to/pi-atelier --subagents=/path/to/pi-subagents --order=provider-first
-npm run test:providers -- --sdk=/path/to/pi-coding-agent --atelier=/path/to/pi-atelier --subagents=/path/to/pi-subagents --order=bar-first
+npm ci
+npm run typecheck
+npm run test:renderer   # also: test:monitor, test:foreground, test:notices, test:cost, test:index
 ```
 
-Optional `--cycler=/path/to/pi-profile-cycler` and `--subpanel=/path/to/pi-subscription-panel` check factory/command coexistence only; the inspected baseline was cycler 1.2.0 and subscription panel 1.0.0. The smoke uses the real Pi SDK, provider RPC and Atelier sidebar registry, **not the Atelier UI**; subscription lifecycle is skipped and no credentials are used. It does not validate visual layout or live subscription operation. For an interactive check, see [manual smoke steps](docs/manual-smoke.md); that visual smoke remains pending.
+An optional smoke test loads the real Pi SDK, provider and Atelier panel registry without calling a model:
 
-## References and license
+```sh
+npm run test:providers -- --sdk=/path/to/pi-coding-agent --atelier=/path/to/pi-atelier \
+  --subagents=/path/to/pi-subagents --order=provider-first   # repeat with --order=bar-first
+```
 
-Independent implementation based on public contracts, not copied upstream code; no official affiliation is implied.
+It checks protocols, not visual layout. For visual checks in the terminal interface, use the [manual smoke checklist](docs/manual-smoke.md). Design notes live in [`docs/`](docs/).
 
-- [Pi extensions](https://pi.dev/docs/latest/extensions) and [Pi package documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
-- [Pi Atelier](https://github.com/michaelmjhhhh/pi-atelier) and its [sidebar panel protocol](https://github.com/michaelmjhhhh/pi-atelier/blob/main/src/sidebar-panels.ts)
-- [nicobailon/pi-subagents extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md)
-- Monitoring references: [fan56/pi-sidebar-panel](https://github.com/fan56/pi-sidebar-panel) and [saifymatteo/pi-orchestrator](https://github.com/saifymatteo/pi-orchestrator)
+## Credits
 
-ISC — see [LICENSE](LICENSE).
+This is an independent implementation built on public extension contracts and is not officially affiliated with Pi, Atelier or `pi-subagents`.
+
+- [Pi extensions](https://pi.dev/docs/latest/extensions) · [Pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
+- [Atelier sidebar panel protocol](https://github.com/michaelmjhhhh/pi-atelier/blob/main/src/sidebar-panels.ts)
+- [pi-subagents extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md)
+- Inspired by [fan56/pi-sidebar-panel](https://github.com/fan56/pi-sidebar-panel) and [saifymatteo/pi-orchestrator](https://github.com/saifymatteo/pi-orchestrator)
+
+## License
+
+[ISC](LICENSE)

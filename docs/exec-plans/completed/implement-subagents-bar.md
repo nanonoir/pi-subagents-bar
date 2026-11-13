@@ -49,7 +49,7 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Structured notices, cross-source completion reconciliation and elapsed-only refresh complete (74 focused tests passed).
 - [x] Optional exact-ID terminal cost enrichment complete (81 focused tests passed including 7 cost tests).
 - [x] Independent review and corrections complete: initial static review PASS on archived `6ab34f4` (report `b21c0612-3f47-4a42-aad0-a75c76c9607e`); supplemental cost/docs review PASS on `23447bc` (report `eef359a3-bde7-47d2-bf52-a1d87fa69316`); post-review defect in dirty invalidation after RPC failure fixed and regression-tested in `6e54680`.
-- [ ] Compatibility smoke and docs reconciliation complete; user visual smoke (`docs/manual-smoke.md`) and plan closure pending.
+- [x] Compatibility smoke and docs reconciliation complete; user visually accepted the corrected panel on 2026-11-13.
 
 ## Validation log
 
@@ -89,7 +89,9 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 ## Outcome
 
-Implementation complete; user visual acceptance pending. Automated verification (87 tests across six focused test files, strict typecheck, 25/25 provider smoke in both load orders) passed; independent reviews complete (initial core review PASS, supplemental review PASS, zero material findings). Plan remains active in `docs/exec-plans/active/implement-subagents-bar.md` with status 'implementation complete; user visual acceptance pending', as interactive TUI / live coexistence acceptance per `docs/manual-smoke.md` has not yet been performed.
+Closed 2026-11-13: the user visually accepted the corrected panel in the live TUI ("quedó joya") after `527411c`. The user did not report the individual resize, reload, session-switch or coexistence checks from `docs/manual-smoke.md`; they are not claimed as separately verified. Published to GitHub as `nanonoir/pi-subagents-bar` at the user's request.
+
+Previous status: implementation complete; user visual acceptance pending. Automated verification (87 tests across six focused test files, strict typecheck, 25/25 provider smoke in both load orders) passed; independent reviews complete (initial core review PASS, supplemental review PASS, zero material findings). Plan remains active in `docs/exec-plans/active/implement-subagents-bar.md` with status 'implementation complete; user visual acceptance pending', as interactive TUI / live coexistence acceptance per `docs/manual-smoke.md` has not yet been performed.
 
 ## Implementation Outcome
 

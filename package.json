@@ -1,7 +1,13 @@
 {
   "name": "pi-subagents-bar",
   "version": "0.1.0",
-  "description": "Live subagent monitoring for Pi Atelier",
+  "description": "Live subagent monitoring for the Pi Atelier sidebar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nanonoir/pi-subagents-bar.git"
+  },
+  "homepage": "https://github.com/nanonoir/pi-subagents-bar#readme",
+  "bugs": "https://github.com/nanonoir/pi-subagents-bar/issues",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -15,9 +21,12 @@
     "test:providers": "node scripts/provider-smoke.mjs"
   },
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "pi-extension",
+    "pi-atelier",
+    "subagents"
   ],
-  "author": "",
+  "author": "Nahuel Noir",
   "license": "ISC",
   "type": "module",
   "pi": {
