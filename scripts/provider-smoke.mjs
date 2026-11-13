@@ -124,7 +124,7 @@ try {
   const p = mine()[0];
   check("panel identity exact", p?.id === PANEL_ID && p?.source === SOURCE && p?.title === TITLE, JSON.stringify([p?.id, p?.source, p?.title]));
   check("only the bar contributed panels", reg.getAvailable().every((x) => x.source === SOURCE));
-  const readyOk = await waitFor(() => rowsText().some((t) => /^Provider: 0 active/.test(t)) && rowsText().some((t) => /No known subagents/.test(t)));
+  const readyOk = await waitFor(() => rowsText().some((t) => /No known subagents/.test(t)) && !rowsText().some((t) => /^Provider:/.test(t)));
   check("ready display (provider status read, empty fleet)", readyOk, JSON.stringify(rowsText()));
   const ping = rpc.filter((r) => r.method === "ping"), status = rpc.filter((r) => r.method === "status");
   check("provider ping and status requested and answered success", ping.length >= 1 && status.length >= 1 && [...ping, ...status].every((r) => r.replyOk === true),

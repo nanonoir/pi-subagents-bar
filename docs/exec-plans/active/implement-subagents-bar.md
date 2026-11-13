@@ -114,3 +114,9 @@ None. Implemented strictly in accordance with PRD `docs/pi-subagents-bar.md` and
 - User execution of interactive visual smoke test in live Atelier TUI per `docs/manual-smoke.md`.
 - At final handoff the user restored the implementation route to `claude-code/claude-sonnet-5-5:medium` for any further increments. No implementation children remain active; this does not require another worker merely to commit documentation.
 - Plan closure and relocation to `docs/exec-plans/completed/implement-subagents-bar.md` following user visual acceptance.
+
+### 2026-11-13 Visual acceptance defects (progress/deviation)
+- Real TUI test showed completed foreground runs as `+ (untitled) (reviewer)` with no task/model/duration and a noisy diagnostic. Root cause: completion notices (and foreground final results lacking `task`) superseded/replaced async or foreground representations of the same exact run without carrying over task/agent/model/duration; the notice path also ignored per-run `taskInfo`/`durationMs`. Fixed by exact-identity metadata retention only (same runId/childId/workflowKey or same foreground (runId,index) key; `taskInfo`/`durationMs` only for a single-execution run); no correlation by task, role or time.
+- Diagnostics: normal supersession is silent; real partial coverage shows `Partial data`; bare `Provider: 0 active` is omitted.
+- Renderer moved to the monitor style (`● N run · ✓ N done · ✕ N err`, `[✓] task (agent) · model` / `  ↳ ⏱ mm:ss · 79,937 tok`). Limitation: Atelier's nerdFont/plain setting is not exposed by the public protocol, so BMP symbols are used and private config is not read.
+- Checks: six focused test files and strict typecheck passed; provider smoke 25/25 in both orders (smoke assertion for the ready display updated to the new no-noise text).

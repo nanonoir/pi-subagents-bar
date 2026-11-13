@@ -437,7 +437,7 @@ describe("normalization", () => {
     expect(s.fleet).toEqual({ active: 9, outside: 4 });
     expect(s.diagnostics?.join(";")).toMatch(/provider projection omitted 3 runs, 2 children, byte limit hit/);
     const panel = renderPanel(s, true);
-    expect(panel.rows[0]?.text).toBe("Known: 1 active");
+    expect(panel.rows[0]?.text).toBe("● 1 run · ✓ 0 done · ✕ 0 err");
     expect(panel.rows[1]?.text).toMatch(/Provider: 9 active; 4 outside fleet window/);
     m.dispose();
   });

@@ -67,13 +67,16 @@ export function sanitizeText(value: unknown, maxChars = MAX_ROW_CHARS): string {
 // ---------------------------------------------------------------------------
 
 const ORDER: RecordCategory[] = ["active", "failed", "neutral", "success"];
-const MARKER: Record<RecordCategory, string> = { active: ">", failed: "x", neutral: "~", success: "+" };
+// BMP symbols only. Atelier's nerdFont/plain-text setting is not part of the public
+// sidebar-panels protocol, so private config is never read; these glyphs render in plain mode.
+const MARKER: Record<RecordCategory, string> = { active: "[●]", failed: "[✕]", neutral: "[~]", success: "[✓]" };
 const ROLE: Record<RecordCategory, SidebarRole> = {
   active: "working", failed: "error", neutral: "caution", success: "success",
 };
 const WORD: Record<RecordCategory, string> = {
   active: "active", failed: "failed", neutral: "other", success: "done",
 };
+const SEP = " · ";
 
 const row = (text: string, role?: SidebarRole): SidebarRow => ({
   text: sanitizeText(text),
@@ -91,11 +94,13 @@ const describe = (c: Counts): string =>
 
 function summaryRow(snapshot: MonitorSnapshot, counts: Counts): SidebarRow {
   if (snapshot.state === "pending") return row("Monitor integration pending", "caution");
-  const text = describe(counts);
-  if (!text && snapshot.state === "connecting") return row("Connecting to subagent provider", "caution");
-  if (!text && snapshot.state === "unavailable") return row("Subagent provider unavailable", "caution");
-  if (!text) return row("No known subagents", "muted");
-  return row(`Known: ${text}`, counts.active > 0 ? "working" : counts.failed > 0 ? "error" : "primary");
+  const known = counts.active + counts.failed + counts.neutral + counts.success;
+  if (!known && snapshot.state === "connecting") return row("Connecting to subagent provider", "caution");
+  if (!known && snapshot.state === "unavailable") return row("Subagent provider unavailable", "caution");
+  if (!known) return row("No known subagents", "muted");
+  const text = `● ${counts.active} run · ✓ ${counts.success} done · ✕ ${counts.failed} err` +
+    (counts.neutral > 0 ? ` · ~ ${counts.neutral} other` : "");
+  return row(text, counts.active > 0 ? "working" : counts.failed > 0 ? "error" : "primary");
 }
 
 function diagnosticRow(snapshot: MonitorSnapshot): SidebarRow | undefined {
@@ -103,7 +108,8 @@ function diagnosticRow(snapshot: MonitorSnapshot): SidebarRow | undefined {
   const parts: string[] = [];
   const active = count(snapshot.fleet?.active);
   const outside = count(snapshot.fleet?.outside);
-  if (active !== undefined) {
+  // A bare zero fleet count carries no information for the user.
+  if (active !== undefined && (active > 0 || outside)) {
     parts.push(`Provider: ${active} active${outside ? `; ${outside} outside fleet window` : ""}`);
   }
   for (const d of snapshot.diagnostics ?? []) parts.push(d);
@@ -111,20 +117,31 @@ function diagnosticRow(snapshot: MonitorSnapshot): SidebarRow | undefined {
   return parts.length ? row(parts.join("; "), "caution") : undefined;
 }
 
+/** Strip provider prefix and a known thinking-level suffix; never invent names. */
+export function shortModel(value: unknown): string {
+  const text = sanitizeText(value, 80);
+  const name = text.slice(text.lastIndexOf("/") + 1).replace(/:(off|minimal|low|medium|high|xhigh)$/i, "");
+  return sanitizeText(name || text, 40);
+}
+
+const groupDigits = (text: string): string =>
+  text.replace(/^\d+/, (n) => n.replace(/\B(?=(\d{3})+$)/g, ","));
+
 function recordRows(rec: SnapshotRecord, twoRows: boolean): SidebarRow[] {
   const role = ROLE[rec.category];
-  const status = sanitizeText(rec.statusLabel, 24);
-  const task = sanitizeText(rec.task, 100) || "(untitled)";
   const agent = sanitizeText(rec.agent, 40);
-  const metrics = [
-    sanitizeText(rec.model, 40),
-    sanitizeText(rec.duration, 24),
-    sanitizeText(rec.tokens, 40),
-  ];
-  const detail = [status, ...metrics].filter(Boolean).join(" | ");
-  const head = `${MARKER[rec.category]} ${task}${agent ? ` (${agent})` : ""}`;
-  if (!twoRows) return [row(detail ? `${head} | ${detail}` : head, role)];
-  return detail ? [row(head, role), { ...row(detail, "muted"), text: `  ${sanitizeText(detail, MAX_ROW_CHARS - 2)}` }] : [row(head, role)];
+  const task = sanitizeText(rec.task, 100);
+  const model = shortModel(rec.model);
+  const title = task || agent || "Subagent";
+  const label = sanitizeText(rec.statusLabel, 24);
+  const status = /stale/i.test(label) ? "stale" : ["", "running", "completed", "failed"].includes(label) ? "" : label;
+  const duration = sanitizeText(rec.duration, 24);
+  const tokens = groupDigits(sanitizeText(rec.tokens, 40));
+  const head = `${MARKER[rec.category]} ${title}${task && agent ? ` (${agent})` : ""}${model ? `${SEP}${model}` : ""}`;
+  const metrics = [status, duration && `⏱ ${duration}`, tokens].filter(Boolean);
+  if (!metrics.length) return [row(head, role)];
+  if (!twoRows) return [row([head, ...metrics].join(SEP), role)];
+  return [row(head, role), { ...row(`↳ ${metrics.join(SEP)}`, "muted"), text: `  ${sanitizeText(`↳ ${metrics.join(SEP)}`, MAX_ROW_CHARS - 2)}` }];
 }
 
 /** Build the bounded panel for a snapshot. `expanded=false` is summary-only. */

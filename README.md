@@ -30,6 +30,15 @@ This package is private and **not published to npm**. After a separate future pu
 
 ## Reading the panel
 
+The summary shows known retained records as `● N run · ✓ N done · ✕ N err` (plus `· ~ N other` only when neutral records exist). Each execution uses up to two rows:
+
+```
+[✓] Review PR33 and PR34 final (reviewer) · GPT-6.1 Terra
+  ↳ ⏱ 06:20 · 79,937 tok
+```
+
+Markers are `[●]` active, `[✕]` failed, `[~]` neutral and `[✓]` success. With no task the agent is the title; the model is shortened by dropping a provider prefix and thinking suffix. The second row shows duration and tokens, plus a status word only when it adds information (`stale`, `stopped`, `timed out`…); with many active records it collapses to one row joined by ` · `. Missing values are omitted, never zero-filled. The panel uses BMP symbols and does not read Atelier's Nerd Font/plain-text setting, because that setting is not part of the public sidebar protocol. A `Partial data` notice appears only when coverage is really incomplete.
+
 Known active executions appear first, then failures, neutral states, and successes. Stopped, cancelled, paused, interrupted and unknown states are not successes. Task/label, role, model, duration and token usage appear only when structured source data supplies them. Text is sanitized and bounded; Atelier clips it to the actual sidebar width. Rows are not interactive.
 
 Counts describe known retained records, not an exact all-session total. Provider fleet counts are separate and must not be added to those counts. There are at most 24 displayed rows, with overflow indicated; active records are not discarded to make room for history. Up to 100 non-active records are retained in memory, with a `history limited` indication when evicted. History is reconstructed from available current-session branch records and provider data; switching sessions or branches rebuilds the view, not a global history.

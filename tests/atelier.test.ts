@@ -8,6 +8,7 @@ import {
   createAtelierPanel,
   renderPanel,
   sanitizeText,
+  shortModel,
   type EventTransport,
   type MonitorSnapshot,
   type RecordCategory,
@@ -80,10 +81,12 @@ describe("renderPanel", () => {
       true,
     );
     const texts = p.rows.map((r) => r.text);
-    expect(texts[0]).toBe("Known: 1 active, 1 failed, 1 other, 1 done");
-    expect(texts.filter((t) => /^[>x~+] /.test(t)).map((t) => t[0]).join("")).toBe(">x~+");
-    expect(texts).toContain("  m1 | 01:02 | 1.2k tok");
-    expect(texts).toContain("  stopped");
+    expect(texts[0]).toBe("● 1 run · ✓ 1 done · ✕ 1 err · ~ 1 other");
+    expect(texts.filter((t) => /^\[.\] /.test(t)).map((t) => t[1]).join("")).toBe("●✕~✓");
+    expect(texts).toContain("[●] task a (worker) · m1");
+    expect(texts).toContain("  ↳ ⏱ 01:02 · 1.2k tok");
+    expect(texts).toContain("  ↳ stopped");
+    expect(texts).toContain("[✓] task s (worker)");
     expect(texts.join("\n")).not.toMatch(/undefined|NaN|0 tok/);
   });
 
@@ -91,7 +94,7 @@ describe("renderPanel", () => {
     const snap = ready([rec("a", "active")], { fleet: { active: 8, outside: 2 }, historyLimited: true });
     const p = renderPanel(snap, false);
     expect(p.rows.map((r) => r.text)).toEqual([
-      "Known: 1 active",
+      "● 1 run · ✓ 0 done · ✕ 0 err",
       "Provider: 8 active; 2 outside fleet window; history limited",
     ]);
   });
@@ -111,14 +114,14 @@ describe("renderPanel", () => {
     for (const r of p.rows) expect(Array.from(r.text).length).toBeLessThanOrEqual(MAX_ROW_CHARS);
     const last = p.rows[p.rows.length - 1]?.text ?? "";
     expect(last).toMatch(/^\+\d+ more known: \d+ done$/);
-    expect(p.rows.filter((r) => r.text.startsWith("> ")).length).toBe(5);
+    expect(p.rows.filter((r) => r.text.startsWith("[●] ")).length).toBe(5);
   });
 
   it("collapses to one row per execution when that preserves active visibility", () => {
     const records = Array.from({ length: 15 }, (_, i) => rec(`a${i}`, "active", { model: "m" }));
     const p = renderPanel(ready(records), true);
     expect(p.rows.length).toBeLessThanOrEqual(MAX_ROWS);
-    expect(p.rows.filter((r) => r.text.startsWith("> ")).length).toBe(15);
+    expect(p.rows.filter((r) => r.text.startsWith("[●] ")).length).toBe(15);
   });
 
   it("overflow names hidden active/failed counts, not 'done'", () => {
@@ -129,7 +132,38 @@ describe("renderPanel", () => {
 
   it("sanitizes provider text in rows", () => {
     const p = renderPanel(ready([rec("a", "active", { task: "x\u001b[2Jy\nz", agent: "a\u0007b" })]), true);
-    expect(p.rows[1]?.text).toBe("> x y z (a b)");
+    expect(p.rows[1]?.text).toBe("[●] x y z (a b)");
+  });
+});
+
+describe("monitor-style formatting", () => {
+  const texts = (r: SnapshotRecord, extra: Partial<MonitorSnapshot> = {}) => renderPanel(ready([r], extra), true).rows.map((x) => x.text);
+  it("matches the reference two-row display", () => {
+    expect(texts({ key: "k", category: "success", statusLabel: "completed", task: "Review PR33 and PR34 final", agent: "reviewer", model: "openai/GPT-6.1 Terra:high", duration: "06:20", tokens: "79937 tok" })).toEqual([
+      "● 0 run · ✓ 1 done · ✕ 0 err",
+      "[✓] Review PR33 and PR34 final (reviewer) · GPT-6.1 Terra",
+      "  ↳ ⏱ 06:20 · 79,937 tok",
+    ]);
+  });
+  it("uses the agent as title without printing (untitled) and omits an empty second row", () => {
+    const t = texts({ key: "k", category: "success", statusLabel: "completed", agent: "reviewer" });
+    expect(t.slice(1)).toEqual(["[✓] reviewer"]);
+    expect(t.join("")).not.toMatch(/untitled/);
+  });
+  it("shows status words only when informative and keeps long hours/grouping", () => {
+    expect(texts({ key: "k", category: "active", statusLabel: "running (stale)", task: "t", duration: "1:02:03", tokens: "1234567 tok" }).slice(1)).toEqual(["[●] t", "  ↳ stale · ⏱ 1:02:03 · 1,234,567 tok"]);
+    expect(texts({ key: "k", category: "failed", statusLabel: "failed", task: "t" }).slice(1)).toEqual(["[✕] t"]);
+  });
+  it("one-row mode joins with ' · '", () => {
+    const records = Array.from({ length: 15 }, (_, i) => rec(`a${i}`, "active", { duration: "00:01" }));
+    const p = renderPanel(ready(records), true);
+    expect(p.rows[1]?.text).toBe("[●] task a0 (worker) · ⏱ 00:01");
+  });
+  it("model display strips provider and thinking suffix only; no 0-fleet noise", () => {
+    expect(shortModel("anthropic/claude-x:xhigh")).toBe("claude-x");
+    expect(shortModel("plain-model")).toBe("plain-model");
+    expect(shortModel("a/b:custom")).toBe("b:custom");
+    expect(renderPanel(ready([], { fleet: { active: 0 } }), true).rows.map((r) => r.text)).toEqual(["No known subagents"]);
   });
 });
 
