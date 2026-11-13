@@ -60,7 +60,7 @@ describe("structured notices", () => {
     const rows = t.m.snapshot().records;
     expect(rows).toHaveLength(2);
     expect(rows.map(r => r.statusLabel).sort()).toEqual(["completed", "running"]);
-    expect(t.m.snapshot().diagnostics?.join(" ")).toMatch(/partial coverage/);
+    expect(t.m.snapshot().diagnostics?.join(" ")).toContain("Partial data");
     t.m.dispose();
   });
 
@@ -136,6 +136,58 @@ describe("display-only elapsed refresh", () => {
     expect(vi.getTimerCount()).toBe(0);
     t.m.resetBranch();
     expect(vi.getTimerCount()).toBe(0);
+    t.m.dispose();
+  });
+});
+
+describe("metadata retention across exact-identity representations", () => {
+  it("single-run notice keeps taskInfo, duration and agent when only the notice represents the run", () => {
+    const t = setup(); t.m.start();
+    t.m.observeMessage(notice({ runId: "p", source: "foreground", status: "completed", agent: "reviewer", taskInfo: "Review PR33", durationMs: 380_000, childRuns: [{ runId: "c1", agent: "reviewer", status: "completed" }] }));
+    expect(t.m.snapshot().records[0]).toMatchObject({ task: "Review PR33", agent: "reviewer", duration: "06:20", category: "success" });
+    expect(t.m.snapshot().diagnostics?.join(" ")).not.toMatch(/partial|superseding/i);
+    t.m.dispose();
+  });
+
+  it("does not copy run-level taskInfo/duration onto one of several children", () => {
+    const t = setup(); t.m.start();
+    t.m.observeMessage(notice({ runId: "p", status: "completed", taskInfo: "whole run", durationMs: 9000, childRuns: [{ runId: "c1", agent: "a", status: "completed" }, { runId: "c2", agent: "b", status: "completed" }] }));
+    for (const r of t.m.snapshot().records) { expect(r.task).toBeUndefined(); expect(r.duration).toBeUndefined(); }
+    t.m.dispose();
+  });
+
+  it("notice supersedes an async root of the same exact run id and retains its task/model/duration", () => {
+    const t = setup(); t.runs([node("p", { label: "Async task", model: "openai/gpt:high", startedAt: 90000, endedAt: 99000, state: "completed" })]); t.m.start();
+    t.m.observeMessage(notice({ runId: "p", status: "completed", agent: "reviewer", childRuns: [{ runId: "p", agent: "reviewer", status: "completed" }] }));
+    const rows = t.m.snapshot().records;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ task: "Async task", model: "openai/gpt:high", agent: "reviewer" });
+    t.m.dispose();
+  });
+
+  it("foreground completion without task keeps task/model from the earlier partial update and same-key rows", () => {
+    const t = setup(); t.m.start();
+    t.m.observeTool("a", result("p", [child(0, "Review PR33", { model: "m1", progress: { status: "running", durationMs: 1000 } })]), false);
+    t.m.observeTool("a", result("p", [{ index: 0, agent: "worker", exitCode: 0, progressSummary: { durationMs: 5000 } }]), true);
+    expect(t.m.snapshot().records[0]).toMatchObject({ task: "Review PR33", model: "m1", duration: "00:05", category: "success" });
+    t.m.dispose();
+  });
+
+  it("completion notice with child runId fills a foreground row's missing metadata by exact alias only", () => {
+    const t = setup(); t.m.start();
+    t.m.observeTool("a", result("p", [{ index: 0, runId: "c1", agent: "worker", detached: true }]), true);
+    t.m.observeMessage(notice({ runId: "p", status: "completed", taskInfo: "Task X", durationMs: 4000, childRuns: [{ runId: "c1", agent: "worker", status: "completed" }] }));
+    expect(t.m.snapshot().records).toHaveLength(1);
+    expect(t.m.snapshot().records[0]).toMatchObject({ category: "success", task: "Task X", duration: "00:04" });
+    t.m.dispose();
+  });
+
+  it("normal supersession is silent; real partial coverage says 'Partial data'", () => {
+    const t = setup(); t.runs([node("p")]); t.m.start();
+    t.m.observeTool("a", result("p", [child(0, "fg")]), false);
+    expect(t.m.snapshot().diagnostics?.join(" ")).not.toMatch(/partial|superseding/i);
+    t.m.observeMessage(notice({ runId: "p", childRuns: [{ status: "completed" }] }));
+    expect(t.m.snapshot().diagnostics).toContain("Partial data");
     t.m.dispose();
   });
 });

@@ -463,7 +463,14 @@ export function createMonitor(options: MonitorOptions): Monitor {
       const matches = noticeChildren.filter((n) => aliasesMatch(f, n));
       if (matches.length !== 1 || fgRows.filter((other) => aliasesMatch(other, matches[0]!)).length !== 1) return f;
       const n = matches[0]!;
-      return n.status === "unknown" ? f : { ...f, status: n.status, ...(n.sortTime !== undefined ? { sortTime: n.sortTime } : {}) };
+      const fill = {
+        ...(!f.task && n.task ? { task: n.task } : {}),
+        ...(!f.agent && n.agent ? { agent: n.agent } : {}),
+        ...(!f.model && n.model ? { model: n.model } : {}),
+        ...(f.durationMs === undefined && n.durationMs !== undefined ? { durationMs: n.durationMs } : {}),
+        ...(!f.tokens && n.tokens ? { tokens: n.tokens } : {}),
+      };
+      return n.status === "unknown" ? { ...f, ...fill } : { ...f, ...fill, status: n.status, ...(n.sortTime !== undefined ? { sortTime: n.sortTime } : {}) };
     });
     return asyncRows.filter((t) => !aggregateParents.has(t.parentId)).concat(mergedNotices, mergedForeground);
   };
@@ -657,7 +664,20 @@ export function createMonitor(options: MonitorOptions): Monitor {
     }
     if (malformed || (Array.isArray(details?.results) && details.results.length > MAX_CHILDREN)) foregroundNotes = ["foreground results partially unavailable"];
     if (scope && [...foreground.values()].some((t) => t.parentId === scope)) {
-      for (const [key, t] of tracked) if (t.parentId === scope) { tracked.delete(key); foregroundNotes = ["foreground representation may have partial coverage"]; }
+      const mine = [...tracked.values()].filter((t) => t.parentId === scope);
+      const fgMine = [...foreground.values()].filter((t) => t.parentId === scope);
+      // A single async root and a single foreground child under the same exact run id are one execution.
+      const root = mine.length === 1 && mine[0]!.path.length === 1 && fgMine.length === 1 ? mine[0] : undefined;
+      if (root) {
+        const f = fgMine[0]!;
+        if (!f.task && root.task) f.task = root.task;
+        if (!f.model && root.model) f.model = root.model;
+        if (!f.agent && root.agent) f.agent = root.agent;
+        if (f.durationMs === undefined && root.durationMs !== undefined) f.durationMs = root.durationMs;
+      }
+      let dropped = false;
+      for (const [key, t] of tracked) if (t.parentId === scope) { tracked.delete(key); dropped = true; }
+      if (dropped && !root) foregroundNotes = ["Partial data"];
     }
     prune();
     changed();
@@ -688,6 +708,14 @@ export function createMonitor(options: MonitorOptions): Monitor {
       const usable = valid.filter((v) => !duplicate(v));
       if (children.length && !usable.length) partial = true;
       const entries = usable.length ? usable : children.length ? [] : [{ child: run, childId: undefined, workflowKey: undefined }];
+      const single = entries.length === 1 && children.length <= 1;
+      /** Exact-identity donor among async projections about to be superseded (never task/role/time). */
+      const donorFor = (runId: string, childId: string | undefined, only: boolean): Tracked | undefined => {
+        const mine = [...tracked.values()].filter((t) => t.parentId === runId);
+        const exact = childId ? mine.filter((t) => t.path[t.path.length - 1] === `subagent:${childId}` || t.path[t.path.length - 1] === `step:${childId}`) : [];
+        if (exact.length === 1) return exact[0];
+        return only && mine.length === 1 && mine[0]!.path.length === 1 ? mine[0] : undefined;
+      };
       for (const item of entries) {
         const aliases = [...notices.values()].filter((n) => n.parentId === parent &&
           ((!!item.childId && n.childId === item.childId) || (!!item.workflowKey && n.workflowKey === item.workflowKey)) &&
@@ -699,23 +727,31 @@ export function createMonitor(options: MonitorOptions): Monitor {
         if (prev && ((item.childId && prev.childId && item.childId !== prev.childId) || (item.workflowKey && prev.workflowKey && item.workflowKey !== prev.workflowKey))) { partial = true; continue; }
         const status = typeof item.child.status === "string" ? STATE_MAP[item.child.status] ?? "unknown" : "unknown";
         if (prev && FINAL.has(prev.status) && prev.status !== status) continue;
-        const agent = rawText(item.child.agent);
-        const duration = usable.length ? undefined : nonNegInt(run.durationMs);
+        const agent = rawText(item.child.agent) ?? (single ? rawText(run.agent) : undefined);
+        // Run-level taskInfo/durationMs describe the run; safe only when the run is one execution.
+        const duration = single ? nonNegInt(run.durationMs) : undefined;
+        const task = single ? rawText(run.taskInfo) : undefined;
+        const donor = donorFor(parent, item.childId, single);
         notices.set(key, { ...prev, key, path: [parent], parentId: parent, status, stale: false,
           ...(item.childId ? { childId: item.childId } : {}),
           ...(item.workflowKey ? { workflowKey: item.workflowKey } : {}),
+          ...(donor?.task && !prev?.task ? { task: donor.task } : {}),
+          ...(donor?.model && !prev?.model ? { model: donor.model } : {}),
+          ...(donor?.agent && !prev?.agent ? { agent: donor.agent } : {}),
+          ...(donor?.durationMs !== undefined && prev?.durationMs === undefined ? { durationMs: donor.durationMs } : {}),
+          ...(task ? { task } : {}),
           ...(agent ? { agent } : {}),
           ...(typeof run.source === "string" ? { noticeSource: run.source } : {}),
           ...(duration !== undefined ? { durationMs: duration } : {}),
           ...(sortTime !== undefined ? { sortTime } : {}),
         });
       }
-      if (usable.length) for (const [key, t] of tracked) if (t.parentId === parent) { tracked.delete(key); partial = true; }
+      if (usable.length) for (const [key, t] of tracked) if (t.parentId === parent) tracked.delete(key);
       if (!usable.length && !children.length && [...foreground.values()].some((t) => t.parentId === parent)) {
         partial = true;
       }
     }
-    if (partial) foregroundNotes = ["notice representation may have partial coverage"];
+    if (partial) foregroundNotes = ["Partial data"];
     prune();
     changed();
     if (!rebuilding) { costDue = true; scheduleCost(); }
@@ -828,9 +864,20 @@ export function createMonitor(options: MonitorOptions): Monitor {
     let conflicting = 0;
     const foregroundParents = new Set([...foreground.values()].map((t) => t.parentId).filter((id): id is string => !!id));
     const noticeParents = new Set([...notices.values()].filter((t) => t.childId || t.workflowKey).map((t) => t.parentId));
-    let superseded = false;
     for (const [key, next] of incoming) {
-      if (next.parentId && (foregroundParents.has(next.parentId) || noticeParents.has(next.parentId))) { superseded = true; continue; }
+      if (next.parentId && (foregroundParents.has(next.parentId) || noticeParents.has(next.parentId))) {
+        // Same exact run id, single foreground/notice execution: keep what the projection proves.
+        const fg = [...foreground.values()].filter((t) => t.parentId === next.parentId);
+        const nt = [...notices.values()].filter((t) => t.parentId === next.parentId);
+        const only = next.path.length === 1 && [...incoming.values()].filter((t) => t.parentId === next.parentId).length === 1;
+        const target = only && fg.length + nt.length === 1 ? (fg[0] ?? nt[0]) : undefined;
+        if (target && (target.childId === undefined || target.childId === next.parentId || fg.length === 1)) {
+          if (!target.task && next.task) target.task = next.task;
+          if (!target.model && next.model) target.model = next.model;
+          if (!target.agent && next.agent) target.agent = next.agent;
+        }
+        continue;
+      }
       const prev = tracked.get(key);
       if (prev && FINAL.has(prev.status)) {
         if (next.status !== prev.status && FINAL.has(next.status)) conflicting += 1;
@@ -840,8 +887,7 @@ export function createMonitor(options: MonitorOptions): Monitor {
     }
     for (const [key, prev] of tracked) {
       if (prev.path.length === 1 && prev.parentId && [...incoming.values()].some((next) => next.parentId === prev.parentId && next.path.length > 1)) {
-        tracked.delete(key);
-        outNotes.push("superseding representation may have partial coverage");
+        tracked.delete(key); // normal supersession by finer exact-identity nodes
         continue;
       }
       if (!incoming.has(key) && CATEGORY[prev.status] === "active" && !prev.stale) {
@@ -851,7 +897,6 @@ export function createMonitor(options: MonitorOptions): Monitor {
       }
     }
     if (conflicting) outNotes.push(`${conflicting} conflicting terminal reports ignored`);
-    if (superseded) outNotes.push("superseding representation may have partial coverage");
     prune();
   };
 
