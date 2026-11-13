@@ -26,7 +26,7 @@ This package is private and **not published to npm**. After a separate future pu
 | `/subagents-bar hide` | Collapse to summary and diagnostics only. |
 | `/subagents-bar toggle` or `/subagents-bar` | Toggle between expanded and summary-only. |
 
-`show` and `hide` are idempotent; the preference is in memory. None of these commands enables or disables Atelier's panel. If it is not visible, use `/atelier display`.
+`show` and `hide` are idempotent; the preference is held in memory within the extension factory closure (persisting across session switches in the same running instance, but resetting to expanded on a fresh extension reload). None of these commands enables or disables Atelier's panel. If it is not visible, use `/atelier display`.
 
 ## Reading the panel
 
@@ -34,7 +34,7 @@ Known active executions appear first, then failures, neutral states, and success
 
 Counts describe known retained records, not an exact all-session total. Provider fleet counts are separate and must not be added to those counts. There are at most 24 displayed rows, with overflow indicated; active records are not discarded to make room for history. Up to 100 non-active records are retained in memory, with a `history limited` indication when evicted. History is reconstructed from available current-session branch records and provider data; switching sessions or branches rebuilds the view, not a global history.
 
-Fleet keys are opaque and cannot safely be joined to execution identities: fleet-only activity is summarized, not rendered as guessed jobs. Bounded or malformed projections can leave partial coverage; absent entries do not prove a job finished. Last-known active data may remain stale until explicit terminal evidence. Async snapshots do not supply tokens or full task details. Optional terminal cost enrichment uses only unique exact child IDs; ambiguous cost rows remain unassigned. Foreground completion notices without child indices can leave detached multi-child executions unresolved.
+Fleet keys are opaque and cannot safely be joined to execution identities: fleet-only activity is summarized, not rendered as guessed jobs. Bounded or malformed projections can leave partial coverage; absent entries do not prove a job finished. Last-known active data may remain stale until explicit terminal evidence. Async snapshots do not supply tokens or full task details. Optional terminal cost enrichment uses only unique exact child IDs; ambiguous cost rows remain unassigned. Foreground completion notices without child indices can leave detached multi-child executions unresolved. Late events for previously unseen tool executions after branch navigation cannot be correlated to the active branch using untagged events alone.
 
 ## Troubleshooting
 
@@ -61,7 +61,7 @@ Optional `--cycler=/path/to/pi-profile-cycler` and `--subpanel=/path/to/pi-subsc
 
 Independent implementation based on public contracts, not copied upstream code; no official affiliation is implied.
 
-- [Pi extensions](https://pi.dev/docs/latest/extensions) and [Pi package documentation](https://github.com/earendil-works/pi-coding-agent/blob/main/docs/packages.md)
+- [Pi extensions](https://pi.dev/docs/latest/extensions) and [Pi package documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
 - [Pi Atelier](https://github.com/michaelmjhhhh/pi-atelier) and its [sidebar panel protocol](https://github.com/michaelmjhhhh/pi-atelier/blob/main/src/sidebar-panels.ts)
 - [nicobailon/pi-subagents extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md)
 - Monitoring references: [fan56/pi-sidebar-panel](https://github.com/fan56/pi-sidebar-panel) and [saifymatteo/pi-orchestrator](https://github.com/saifymatteo/pi-orchestrator)

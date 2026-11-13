@@ -48,8 +48,8 @@ Stages 3–5 may be repartitioned following design evidence, but each commit mus
 - [x] Core foreground/tool-result history validated and committed: explicit indexed identity, promotion, child metrics, async representation suppression, current branch rebuild and RPC-independent coverage (66 focused tests).
 - [x] Structured notices, cross-source completion reconciliation and elapsed-only refresh complete (74 focused tests passed).
 - [x] Optional exact-ID terminal cost enrichment complete (81 focused tests passed including 7 cost tests).
-- [ ] Independent review and corrections complete.
-- [ ] Compatibility smoke, docs reconciliation and plan closure complete.
+- [x] Independent review and corrections complete: initial static review PASS on archived `6ab34f4` (report `b21c0612-3f47-4a42-aad0-a75c76c9607e`); supplemental cost/docs review PASS on `23447bc` (report `eef359a3-bde7-47d2-bf52-a1d87fa69316`); post-review defect in dirty invalidation after RPC failure fixed and regression-tested in `6e54680`.
+- [ ] Compatibility smoke and docs reconciliation complete; user visual smoke (`docs/manual-smoke.md`) and plan closure pending.
 
 ## Validation log
 
@@ -79,6 +79,38 @@ Smoke feasibility corrections: SDK root does not export `loadExtensionFromFactor
 
 2026-11-12: Docs/package worker1667f72c-bdbd-4c3d-be81-9363f739db52 completed README, ISC license, user manual smoke checklist and source package metadata. Offline lockfile update affected root metadata only (no dependency upgrades). Worker ran typecheck, 29 focused renderer/command tests and npm pack --dry-run --json (16 files, no bundled dependencies). Parent inspected README/manual/package/lock diff. Independent reviewer b21c0612-3f47-4a42-aad0-a75c76c9607e reviews immutable6ab34f4 plus stable final cost/doc source with direct read tools only; no failed-tool review is treated as approval.
 
+2026-11-12: Independent static review completed by `b21c0612-3f47-4a42-aad0-a75c76c9607e` on archived commit `6ab34f4`: verdict PASS with zero material findings. Clarified in-memory display preference persistence: held in extension factory closure across session switches, but resets on extension reload.
+
+2026-11-12: Supplemental independent review completed by `eef359a3-bde7-47d2-bf52-a1d87fa69316` on cost enrichment and documentation at commit `23447bc`: verdict PASS with zero material findings. Verified candidate ID isolation, bidirectional 1-to-1 cost joins, zero/incomplete usage formatting, lifecycle triggers, session/branch isolation, and documentation honesty.
+
+2026-11-12: Post-review source correction committed in `6e54680`: fixed dirty invalidation preservation in `loadStatus`/`fail` upon status error, timeout, or malformed reply. Parent reproduced defect before fix, inspected diff, and verified strict typecheck and all focused tests. Fix-agent `448017b3-363f-4d3d-a27f-0d7414bae881` added 6 regression tests in `tests/monitor.test.ts`. Total 87 tests passing across six named focused test files (`tests/monitor.test.ts` [38], `tests/notices.test.ts` [8], `tests/cost.test.ts` [7], `tests/index.test.ts` [10], `tests/atelier.test.ts`, `tests/foreground.test.ts`). Strict typecheck passed.
+
+2026-11-12: Parent rerun final installed-provider smoke on `6e54680`: 25/25 provider-first and 25/25 bar-first exit 0 against real Pi 1.5.2, Atelier 0.18.0, pi-subagents 0.88.0, cycler 1.2.0, and subscription-panel 1.0.0 (factory/command coexistence only; subscription lifecycle skipped, no runner errors/network access). Package dry-run (`npm pack --dry-run`) verified 16 files, no bundled dependencies, `private: true`. Visual smoke instructions provided in `docs/manual-smoke.md` for user manual verification.
+
 ## Outcome
 
-In progress; implementation, README/package metadata and headless protocol smoke complete, pending independent review/corrections and documentation reconciliation. User-authorized implementer route remains openai/gpt-6.1-terra:high. Interactive TUI acceptance is reserved for the user's manual check, not claimed by headless automation.
+Implementation complete; user visual acceptance pending. Automated verification (87 tests across six focused test files, strict typecheck, 25/25 provider smoke in both load orders) passed; independent reviews complete (initial core review PASS, supplemental review PASS, zero material findings). Plan remains active in `docs/exec-plans/active/implement-subagents-bar.md` with status 'implementation complete; user visual acceptance pending', as interactive TUI / live coexistence acceptance per `docs/manual-smoke.md` has not yet been performed.
+
+## Implementation Outcome
+
+### Implemented
+- Minimal, read-only Pi Atelier sidebar extension (`subagents-bar:subagents`) observing `nicobailon/pi-subagents` via public RPC and bus events.
+- Three decoupled modules and shared type contract: `src/index.ts` (lifecycle, `/subagents-bar` command), `src/monitor.ts` (RPC negotiation, burst coalescing, dirty follow-up preservation on status failure, normalized identity reconciliation, active elapsed timer, terminal cost enrichment, bounded retention), `src/atelier.ts` (protocol v1 publisher, monotonic revision allocator, text sanitization, 24-row budget), and `src/types.ts` (shared snapshot contracts).
+- Support for `/subagents-bar show`, `hide`, `toggle`, and bare `/subagents-bar` with user guidance for `/atelier display`.
+- Isolated installed-provider protocol smoke script (`scripts/provider-smoke.mjs`) covering provider-first and bar-first load orders and coexistence checks.
+- Comprehensive user documentation (`README.md`, `LICENSE`, `docs/manual-smoke.md`).
+
+### Deviations from Design
+None. Implemented strictly in accordance with PRD `docs/pi-subagents-bar.md` and design `docs/design-docs/subagents-bar.md`. Shared interfaces were factored into `src/types.ts` to avoid circular dependencies as explicitly permitted by design.
+
+### Validation
+- **Unit and Integration Tests**: 87 tests passed across six named focused test files (`tests/monitor.test.ts` [38], `tests/notices.test.ts` [8], `tests/cost.test.ts` [7], `tests/index.test.ts` [10], `tests/atelier.test.ts`, `tests/foreground.test.ts`).
+- **Type Checking**: Strict TypeScript validation (`tsc --noEmit -p tsconfig.json`) passed with zero errors.
+- **Headless Protocol Smoke**: 25/25 checks passed in provider-first order and 25/25 checks passed in bar-first order on `6e54680` using real installed Pi 1.5.2, Atelier 0.18.0, pi-subagents 0.88.0, cycler 1.2.0, and subscription-panel 1.0.0.
+- **Packaging**: `npm pack --dry-run` verified 16 files, zero bundled dependencies, and `"private": true`.
+- **Independent Reviews**: Initial core review (`b21c0612-3f47-4a42-aad0-a75c76c9607e`) and supplemental review (`eef359a3-bde7-47d2-bf52-a1d87fa69316`) both passed with zero material findings.
+
+### Follow-up
+- User execution of interactive visual smoke test in live Atelier TUI per `docs/manual-smoke.md`.
+- At final handoff the user restored the implementation route to `claude-code/claude-sonnet-5-5:medium` for any further increments. No implementation children remain active; this does not require another worker merely to commit documentation.
+- Plan closure and relocation to `docs/exec-plans/completed/implement-subagents-bar.md` following user visual acceptance.

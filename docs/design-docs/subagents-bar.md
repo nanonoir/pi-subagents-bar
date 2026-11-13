@@ -142,6 +142,8 @@ Run focused tests and typecheck for each increment. Headless installed-provider 
 - Legacy/malformed records without safe identities are diagnosed, not heuristically duplicated. Snapshot node IDs are not universal child run IDs; replacing representations can lose uncorrelatable metadata.
 - A foreground completion notice may omit the child index; a multi-child detached run can therefore remain neutral/unresolved until another structured source identifies that child. Parent dispatch completion is not all-child success.
 - Missing projection entries never establish completion. Last-known active entries can remain stale until terminal evidence; reload restores only facts still present on the current branch/provider.
+- Same-session late tool events for previously unseen tool IDs may still be observed after branch navigation. The public event has no branch tag, so exact attribution is not guaranteed; known prior calls and old RPC replies are ignored.
+- Expanded display preference is held in-memory within the extension factory closure; it persists across session changes within the running extension instance, but resets on extension reload.
 - The public Atelier protocol cannot report presence, visibility, width or force-enable a panel. No config workaround, private import or installed-extension modification is part of this design.
 
 No pending technical decisions; these are explicit degraded behaviors, not blockers to the independent implementation.
